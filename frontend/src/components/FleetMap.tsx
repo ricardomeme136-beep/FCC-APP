@@ -1,63 +1,48 @@
-import React from "react";
+import React, { useMemo, useRef } from "react";
 import { StyleSheet, View } from "react-native";
-import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from "react-native-maps";
+import { WebView } from "react-native-webview";
 import { colors, radius } from "@/src/theme";
+import { getLeafletHtml, FleetMapProps } from "@/src/components/leafletHtml";
 
-export type LatLng = { latitude: number; longitude: number };
-export type MapMarker = {
-  id: string;
-  lat: number;
-  lng: number;
-  color?: string;
-  kind?: "truck" | "container" | "incident" | "depot" | "facility" | "next";
-  label?: string;
-};
-export type RouteLine = { coordinates: LatLng[]; color?: string; width?: number };
-
-type Props = {
-  markers: MapMarker[];
-  polylines?: RouteLine[];
-  onPressMarker?: (id: string) => void;
-  center?: { lat: number; lng: number };
-  style?: any;
-};
-
-export default function FleetMap({ markers, polylines, onPressMarker, center, style }: Props) {
+// Native: real OpenStreetMap/Carto map inside a WebView (no API key needed).
+export default function FleetMap({ markers, polylines, onPressMarker, center, style }: FleetMapProps) {
+  const ref = useRef<WebView>(null);
   const c = center || (markers[0] ? { lat: markers[0].lat, lng: markers[0].lng } : { lat: 38.7223, lng: -9.1393 });
+  const html = useMemo(() => getLeafletHtml(c.lat, c.lng), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const deliver = () => {
+    const payload = JSON.stringify({ markers, polylines: polylines || [] });
+    ref.current?.injectJavaScript(`window.__deliver && window.__deliver(${payload}); true;`);
+  };
+
+  // re-deliver whenever data changes
+  React.useEffect(() => {
+    deliver();
+  }); // runs after each render; cheap JS inject
+
   return (
     <View style={[styles.container, style]}>
-      <MapView
-        provider={PROVIDER_DEFAULT}
-        style={StyleSheet.absoluteFill}
-        initialRegion={{ latitude: c.lat, longitude: c.lng, latitudeDelta: 0.08, longitudeDelta: 0.08 }}
-      >
-        {(polylines || []).map((p, i) => (
-          <Polyline key={`pl-${i}`} coordinates={p.coordinates} strokeColor={p.color || colors.brand} strokeWidth={p.width || 4} />
-        ))}
-        {markers.map((m) => (
-          <Marker key={m.id} coordinate={{ latitude: m.lat, longitude: m.lng }} onPress={() => onPressMarker?.(m.id)} anchor={{ x: 0.5, y: 0.5 }}>
-            <MarkerDot color={m.color || colors.brand} kind={m.kind} />
-          </Marker>
-        ))}
-      </MapView>
+      <WebView
+        ref={ref}
+        originWhitelist={["*"]}
+        source={{ html }}
+        style={styles.web}
+        javaScriptEnabled
+        domStorageEnabled
+        onLoadEnd={deliver}
+        onMessage={(e) => {
+          try {
+            const d = JSON.parse(e.nativeEvent.data);
+            if (d.__wf && d.type === "ready") deliver();
+            if (d.__wf && d.type === "marker" && onPressMarker) onPressMarker(d.id);
+          } catch {}
+        }}
+      />
     </View>
   );
 }
 
-function MarkerDot({ color, kind }: { color: string; kind?: string }) {
-  if (kind === "truck" || kind === "next") {
-    return (
-      <View style={[styles.truck, { backgroundColor: color }]}>
-        <View style={styles.truckInner} />
-      </View>
-    );
-  }
-  return <View style={[styles.dot, { backgroundColor: color }]} />;
-}
-
 const styles = StyleSheet.create({
-  container: { flex: 1, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
-  dot: { width: 14, height: 14, borderRadius: 7, borderWidth: 2, borderColor: "#fff" },
-  truck: { width: 22, height: 22, borderRadius: 11, borderWidth: 3, borderColor: "#fff", alignItems: "center", justifyContent: "center", shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 3 },
-  truckInner: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff" },
+  container: { flex: 1, borderRadius: radius.lg, overflow: "hidden", backgroundColor: "#EAEDF2" },
+  web: { flex: 1, backgroundColor: "#EAEDF2" },
 });

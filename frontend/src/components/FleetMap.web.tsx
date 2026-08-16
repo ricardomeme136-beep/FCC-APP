@@ -1,96 +1,48 @@
-import React, { useState } from "react";
-import { Pressable, StyleSheet, View, Text } from "react-native";
-import Svg, { Line, Polyline as SvgPolyline, Circle } from "react-native-svg";
-import { colors, fonts, radius } from "@/src/theme";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { StyleSheet, View } from "react-native";
+import { colors, radius } from "@/src/theme";
+import { getLeafletHtml, FleetMapProps } from "@/src/components/leafletHtml";
 
-export type LatLng = { latitude: number; longitude: number };
-export type MapMarker = {
-  id: string;
-  lat: number;
-  lng: number;
-  color?: string;
-  kind?: "truck" | "container" | "incident" | "depot" | "facility" | "next";
-  label?: string;
-};
-export type RouteLine = { coordinates: LatLng[]; color?: string; width?: number };
+// Web: real OpenStreetMap/Carto map inside a same-origin <iframe srcDoc>.
+export default function FleetMap({ markers, polylines, onPressMarker, center, style }: FleetMapProps) {
+  const iframeRef = useRef<any>(null);
+  const [ready, setReady] = useState(false);
+  const c = center || (markers[0] ? { lat: markers[0].lat, lng: markers[0].lng } : { lat: 38.7223, lng: -9.1393 });
+  const html = useMemo(() => getLeafletHtml(c.lat, c.lng), []); // eslint-disable-line react-hooks/exhaustive-deps
 
-type Props = {
-  markers: MapMarker[];
-  polylines?: RouteLine[];
-  onPressMarker?: (id: string) => void;
-  center?: { lat: number; lng: number };
-  style?: any;
-};
+  // listen for marker clicks + ready signal from the iframe
+  useEffect(() => {
+    const handler = (e: MessageEvent) => {
+      try {
+        const d = typeof e.data === "string" ? JSON.parse(e.data) : e.data;
+        if (d && d.__wf && d.type === "ready") setReady(true);
+        if (d && d.__wf && d.type === "marker" && onPressMarker) onPressMarker(d.id);
+      } catch {}
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [onPressMarker]);
 
-// Web schematic fallback (react-native-maps has no web build) — rendered with SVG
-// for a clean "GPS route" look on the web preview.
-export default function FleetMap({ markers, polylines, onPressMarker, style }: Props) {
-  const [size, setSize] = useState({ w: 0, h: 0 });
-
-  const allPts = [
-    ...markers.map((m) => ({ lat: m.lat, lng: m.lng })),
-    ...(polylines || []).flatMap((p) => p.coordinates.map((c) => ({ lat: c.latitude, lng: c.longitude }))),
-  ];
-  const lats = allPts.map((p) => p.lat);
-  const lngs = allPts.map((p) => p.lng);
-  const minLat = Math.min(...lats, 38.68);
-  const maxLat = Math.max(...lats, 38.78);
-  const minLng = Math.min(...lngs, -9.22);
-  const maxLng = Math.max(...lngs, -9.08);
-  const padLat = (maxLat - minLat) * 0.12 || 0.01;
-  const padLng = (maxLng - minLng) * 0.12 || 0.01;
-
-  const X = (lng: number) => ((lng - (minLng - padLng)) / (maxLng - minLng + 2 * padLng)) * size.w;
-  const Y = (lat: number) => (1 - (lat - (minLat - padLat)) / (maxLat - minLat + 2 * padLat)) * size.h;
+  // deliver data to the iframe when ready or when data changes
+  useEffect(() => {
+    const win = iframeRef.current?.contentWindow;
+    if (win && ready) {
+      win.postMessage({ __wf: "data", payload: { markers, polylines: polylines || [] } }, "*");
+    }
+  }, [ready, markers, polylines]);
 
   return (
-    <View
-      style={[styles.container, style]}
-      onLayout={(e) => setSize({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
-    >
-      {size.w > 0 && (
-        <Svg width={size.w} height={size.h}>
-          {[...Array(8)].map((_, i) => (
-            <Line key={`v${i}`} x1={(i / 7) * size.w} y1={0} x2={(i / 7) * size.w} y2={size.h} stroke={colors.divider} strokeWidth={1} />
-          ))}
-          {[...Array(8)].map((_, i) => (
-            <Line key={`h${i}`} x1={0} y1={(i / 7) * size.h} x2={size.w} y2={(i / 7) * size.h} stroke={colors.divider} strokeWidth={1} />
-          ))}
-          {(polylines || []).map((p, i) => (
-            <SvgPolyline
-              key={`pl${i}`}
-              points={p.coordinates.map((c) => `${X(c.longitude)},${Y(c.latitude)}`).join(" ")}
-              fill="none"
-              stroke={p.color || colors.brand}
-              strokeWidth={p.width || 4}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
-          ))}
-          {markers.map((m) => {
-            const r = m.kind === "truck" || m.kind === "next" ? 8 : 6;
-            return (
-              <Circle key={m.id} cx={X(m.lng)} cy={Y(m.lat)} r={r} fill={m.color || colors.brand} stroke="#fff" strokeWidth={2} />
-            );
-          })}
-        </Svg>
-      )}
-      <Text style={styles.tag}>MAPA OPERACIONAL</Text>
-      {/* tap targets */}
-      {size.w > 0 &&
-        markers.map((m) => (
-          <Pressable
-            key={`t-${m.id}`}
-            testID={`map-marker-${m.id}`}
-            onPress={() => onPressMarker?.(m.id)}
-            style={{ position: "absolute", left: X(m.lng) - 12, top: Y(m.lat) - 12, width: 24, height: 24 }}
-          />
-        ))}
+    <View style={[styles.container, style]}>
+      {React.createElement("iframe", {
+        ref: iframeRef,
+        srcDoc: html,
+        onLoad: () => setReady(true),
+        style: { width: "100%", height: "100%", border: "none", display: "block" },
+      })}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: colors.surfaceSecondary, borderRadius: radius.lg, overflow: "hidden" },
-  tag: { position: "absolute", top: 10, left: 12, fontFamily: fonts.monoMedium, fontSize: 10, letterSpacing: 0.6, color: colors.muted },
+  container: { flex: 1, borderRadius: radius.lg, overflow: "hidden", backgroundColor: "#EAEDF2" },
 });
