@@ -1,0 +1,121 @@
+{
+  "app_name": "WasteFlow",
+  "personality": "5 Brutalist Mobile LIGHT",
+  "personality_one_liner": "An industrial, high-contrast command center prioritizing absolute operational clarity, massive touch targets, and raw data visibility over visual softness.",
+  "color": {
+    "surface": "#FFFFFF",
+    "onSurface": "#0A0A0A",
+    "surfaceSecondary": "#F4F4F5",
+    "onSurfaceSecondary": "#18181B",
+    "surfaceTertiary": "#E4E4E7",
+    "onSurfaceTertiary": "#27272A",
+    "surfaceInverse": "#0A0A0A",
+    "onSurfaceInverse": "#FFFFFF",
+    "brand": "#F97316",
+    "brandPrimary": "#F97316",
+    "onBrandPrimary": "#0A0A0A",
+    "brandSecondary": "#18181B",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#FFEDD5",
+    "onBrandTertiary": "#C2410C",
+    "success": "#059669",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F59E0B",
+    "onWarning": "#0A0A0A",
+    "error": "#DC2626",
+    "onError": "#FFFFFF",
+    "info": "#3F3F46",
+    "onInfo": "#FFFFFF",
+    "border": "#E4E4E7",
+    "borderStrong": "#0A0A0A",
+    "divider": "#E4E4E7"
+  },
+  "typography": {
+    "displayFontFamily": "Clash Display",
+    "textFontFamily": "JetBrains Mono",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Dense, structural spacing with rigid grids. No accidental whitespace. Exposed structural borders help chunk logistics data. Generous touch zones (min 64pt) for driver-facing big buttons.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 0,
+    "md": 0,
+    "lg": 0,
+    "pill": 0
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Phosphor",
+  "glassmorphism": {
+    "enabled": false,
+    "do's": [],
+    "dont's": ["Never use glass in this Brutalist utility app. Rely on hard borders, opaque surfaces, and high-contrast color blocks."]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Management Dashboard (Admin)",
+      "purpose": "A commanding overview of fleet operations with real-time map tracking and high-density KPI metrics.",
+      "states": {
+        "loading": "Map skeleton with mono text 'A CARREGAR DADOS...'",
+        "empty": "No active operations - showing illustration and 'Nenhuma operação em curso'.",
+        "error": "Mono text error block with stark red border and 'TENTAR NOVAMENTE' action."
+      },
+      "layout": "Map takes up the top 50% or sits behind the content. A rigid grid of structural KPI cards (CAMIÕES ATIVOS, RECOLHAS DE HOJE, CONCLUÍDAS, FALHADAS, EM ATRASO, OCORRÊNCIAS ATIVAS) sits below or overlays it. Use heavy 2pt border lines to separate metrics. Typography should be large Clash Display for numbers, JetBrains Mono for labels. A tab toggle controls Map vs List views."
+    },
+    {
+      "name": "Driver Active Route (Driver App)",
+      "purpose": "A highly tactile, glanceable screen for drivers in transit, featuring massive interaction targets and zero visual clutter.",
+      "states": {
+        "loading": "Mono text 'A SINCRONIZAR ROTA...'",
+        "empty": "Screen states 'O SEU TURNO TERMINOU'.",
+        "error": "Large red block 'FALHA DE LIGAÇÃO' + retry button."
+      },
+      "layout": "The header reads 'A MINHA ROTA DE HOJE'. The core screen displays the next collection card heavily boxed with 2pt borders. Below, massive square or full-width buttons (NAVEGAR [brand], RECOLHIDO [success], PROBLEMA [warning/error], IGNORAR [surfaceSecondary]) dominate the bottom half of the screen. Touch targets must be aggressively large (min 64-80pt) for one-handed/gloved use."
+    }
+  ],
+  "images": {
+    "hero_waste_truck": {
+      "url": "https://images.unsplash.com/photo-1650535716978-eb644a8cf898?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTV8MHwxfHNlYXJjaHwzfHxpbmR1c3RyaWFsJTIwd2FzdGUlMjB0cnVja3xlbnwwfHx8fDE3ODY4OTI2NzN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Industrial orange waste truck parked."
+    },
+    "map_route_placeholder": {
+      "url": "https://images.unsplash.com/photo-1604357209793-fca5dca89f97?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2OTF8MHwxfHNlYXJjaHwxfHxtYXAlMjByb3V0ZSUyMGludGVyZmFjZSUyMEdQU3xlbnwwfHx8fDE3ODY4OTI2NzN8MA&ixlib=rb-4.1.0&q=85",
+      "alt": "Map route GPS view placeholder."
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the Brutalist Mobile LIGHT personality: NO rounded corners (radius 0 everywhere), NO shadows, NO glassmorphism.",
+    "Use 2pt thick borders (`borderStrong`) to organize layout structures and separate KPI cards instead of relying on shadows or surfaces. The interface should look like a highly functional poster.",
+    "Typography: Use `Clash Display` for major numbers and headings, and `JetBrains Mono` for metadata, labels, and timestamps. Never exceed font-weight 500.",
+    "For the Driver App: Ensure the action buttons (NAVEGAR, RECOLHIDO, PROBLEMA, IGNORAR) are massive, full-width, or giant squares. They need to be extremely easy to hit without looking precisely.",
+    "Colors: Use `surface` (White) heavily with `onSurface` (Black). Highlight primary actions with `brand` (Safety Orange). Use the specific status colors defined for Concluídas, Em atraso, and Ocorrências.",
+    "Never use indigo, blue, or purple anywhere. Use the predefined dark zinc and stark blacks.",
+    "All copy MUST be in European Portuguese as provided in the problem statement."
+  ]
+}
