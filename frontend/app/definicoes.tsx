@@ -39,7 +39,7 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
   row: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
 });

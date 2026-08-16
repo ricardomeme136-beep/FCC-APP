@@ -41,9 +41,9 @@ export default function Ocorrencias() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  card: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md, backgroundColor: colors.surface },
+  card: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md, backgroundColor: colors.surface },
   bar: { width: 6, alignSelf: "stretch" },
   st: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
 });

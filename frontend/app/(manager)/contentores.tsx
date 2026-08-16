@@ -78,13 +78,13 @@ export default function Contentores() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   chipWrap: { borderBottomWidth: border.width, borderBottomColor: colors.borderStrong },
   chipRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: "center" },
-  chip: { height: 36, justifyContent: "center", flexShrink: 0, paddingHorizontal: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, backgroundColor: colors.surface },
+  chip: { height: 36, justifyContent: "center", flexShrink: 0, paddingHorizontal: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, backgroundColor: colors.surface },
   chipOn: { backgroundColor: colors.onSurface },
   list: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md, backgroundColor: colors.surface },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md, backgroundColor: colors.surface },
   wasteBar: { width: 6, alignSelf: "stretch" },
   statusDot: { width: 12, height: 12 },
 });

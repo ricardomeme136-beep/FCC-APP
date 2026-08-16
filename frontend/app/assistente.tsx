@@ -85,16 +85,16 @@ export default function Assistente() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xl },
   intro: { alignItems: "center", gap: spacing.lg, paddingTop: spacing.xl },
-  aiMark: { width: 56, height: 56, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  aiMark: { width: 56, height: 56, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   suggWrap: { gap: spacing.sm, width: "100%" },
-  sugg: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md, backgroundColor: colors.surfaceSecondary },
-  bubble: { padding: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, maxWidth: "90%" },
+  sugg: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md, backgroundColor: colors.surfaceSecondary },
+  bubble: { padding: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, maxWidth: "90%" },
   user: { alignSelf: "flex-end", backgroundColor: colors.onSurface },
   ai: { alignSelf: "flex-start", backgroundColor: colors.surface },
   inputBar: { flexDirection: "row", gap: spacing.sm, padding: spacing.md, borderTopWidth: border.width, borderTopColor: colors.borderStrong, alignItems: "center" },
-  input: { flex: 1, height: 48, borderWidth: border.width, borderColor: colors.borderStrong, paddingHorizontal: spacing.md, fontFamily: fonts.mono, fontSize: 14, color: colors.onSurface },
-  sendBtn: { width: 48, height: 48, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  input: { flex: 1, height: 48, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, paddingHorizontal: spacing.md, fontFamily: fonts.mono, fontSize: 14, color: colors.onSurface },
+  sendBtn: { width: 48, height: 48, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, alignItems: "center", justifyContent: "center" },
 });

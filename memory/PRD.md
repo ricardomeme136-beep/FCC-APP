@@ -10,6 +10,12 @@ Plataforma SaaS multiempresa de gestão de recolha de resíduos (estilo FCC). Um
 - **IA**: Claude Sonnet 4.6 via emergentintegrations, respostas ancoradas em dados reais (`routers/ai.py`).
 - **Design**: Brutalist Mobile LIGHT — Space Grotesk (títulos) + JetBrains Mono (dados), radius 0, bordas 2pt, laranja de segurança #F97316.
 
+## Atualização (2026-08-16b) — Redesign + Mapa GPS
+- Novo design "Moderno Claro e Suave": cantos arredondados, sombras suaves, fundo cinza claro, cartões brancos, tipografia Space Grotesk, laranja mantido. Aplicado a toda a app (tema + componentes centralizados).
+- Mapa em tempo real desenha as **rotas** (linhas coloridas a ligar contentores) + camiões a mover-se. Camada "ROTAS" ativável.
+- Rota detalhada e app do Motorista mostram a geometria da rota num mapa de **navegação**.
+- Backend: `services/routing.py` (OpenRouteService) + endpoints `GET /routes/{id}/geometry` e `POST /routes/navigate`. Fallback para linhas diretas quando não há key. Env: `ORS_API_KEY` (vazio por defeito). Para rotas por estrada reais, obter key gratuita em openrouteservice.org/dev e colocar em `/app/backend/.env`.
+
 ## Personas
 Super Admin, Administrador da Empresa, Despachante, Motorista, Gestor de Operações, Gestor de Manutenção, Cliente.
 

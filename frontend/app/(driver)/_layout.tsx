@@ -16,12 +16,12 @@ export default function DriverLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.onSurface,
+        tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopWidth: border.width,
-          borderTopColor: colors.borderStrong,
+          borderTopColor: colors.divider,
           height: 64 + insets.bottom,
           paddingBottom: insets.bottom + 6,
           paddingTop: 8,

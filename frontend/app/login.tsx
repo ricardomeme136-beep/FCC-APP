@@ -122,24 +122,24 @@ export default function Login() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { paddingHorizontal: spacing.lg, gap: spacing.lg },
   brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   logoMark: {
     width: 52, height: 52, backgroundColor: colors.brand,
-    borderWidth: border.width, borderColor: colors.borderStrong,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     alignItems: "center", justifyContent: "center",
   },
-  hero: { width: "100%", height: 150, borderWidth: border.width, borderColor: colors.borderStrong },
+  hero: { width: "100%", height: 150, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
   form: { gap: spacing.xs },
   input: {
-    borderWidth: border.width, borderColor: colors.borderStrong,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     paddingHorizontal: spacing.md, height: 50, fontFamily: fonts.mono,
     fontSize: 15, color: colors.onSurface, backgroundColor: colors.surface,
   },
   demoWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
   demoChip: {
-    borderWidth: border.width, borderColor: colors.borderStrong,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
     backgroundColor: colors.surfaceSecondary,
   },

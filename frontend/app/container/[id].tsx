@@ -63,13 +63,13 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  qrCard: { alignItems: "center", borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg, backgroundColor: colors.surface },
+  qrCard: { alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, backgroundColor: colors.surface },
   wasteTag: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   wasteDot: { width: 16, height: 16 },
-  infoCard: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.sm },
+  infoCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm },
   row: { flexDirection: "row", justifyContent: "space-between", gap: spacing.md },
-  mapBox: { height: 160, borderWidth: border.width, borderColor: colors.borderStrong },
-  histRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md },
+  mapBox: { height: 160, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
+  histRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md },
 });

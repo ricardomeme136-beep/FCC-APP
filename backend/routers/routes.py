@@ -8,6 +8,7 @@ from core.db import db, NO_ID
 from core.models import OptimizeIn
 from core.security import current_user, require_roles, tenant_query, write_audit, MANAGEMENT_ROLES
 from services.optimizer import generate_routes, optimize_single
+from services.routing import road_route
 from routers.entities import now_iso
 
 router = APIRouter(tags=["routes"])
@@ -165,9 +166,50 @@ async def reoptimize(rid: str, request: Request,
             tenant_query(user, {"id": s["id"]}), {"$set": {"sequence": seq + 1}})
     await db.routes.update_one(tenant_query(user, {"id": rid}),
                                {"$set": {"distance_km": res["distance_km"],
-                                         "duration_min": res["duration_min"]}})
+                                         "duration_min": res["duration_min"],
+                                         "geometry_cache": None}})
     await write_audit(user, "reoptimize", "route", rid, request)
     return await get_route(rid, user)
+
+
+@router.get("/routes/{rid}/geometry")
+async def route_geometry(rid: str, user: dict = Depends(current_user)):
+    """Road-following geometry (depot -> stops in sequence -> facility) with
+    turn-by-turn steps. Cached on the route document."""
+    route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
+    if not route:
+        raise HTTPException(404, "Rota não encontrada")
+    if route.get("geometry_cache"):
+        return route["geometry_cache"]
+
+    tasks = await db.collection_tasks.find(
+        tenant_query(user, {"route_id": rid}), NO_ID).sort("sequence", 1).to_list(2000)
+    stops: list = []
+    depot = await db.depots.find_one(tenant_query(user, {"id": route.get("start_depot_id")}), NO_ID)
+    if depot:
+        stops.append((depot["lat"], depot["lng"]))
+    stops.extend([(t["lat"], t["lng"]) for t in tasks])
+    if route.get("end_facility_id"):
+        fac = await db.facilities.find_one(tenant_query(user, {"id": route["end_facility_id"]}), NO_ID)
+        if fac:
+            stops.append((fac["lat"], fac["lng"]))
+
+    geo = await road_route(stops)
+    await db.routes.update_one(tenant_query(user, {"id": rid}),
+                               {"$set": {"geometry_cache": geo}})
+    return geo
+
+
+@router.post("/routes/navigate")
+async def navigate(payload: dict, user: dict = Depends(current_user)):
+    """Road route between two points for driver navigation.
+    payload: {from_lat, from_lng, to_lat, to_lng}"""
+    try:
+        stops = [(float(payload["from_lat"]), float(payload["from_lng"])),
+                 (float(payload["to_lat"]), float(payload["to_lng"]))]
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(400, "Coordenadas inválidas")
+    return await road_route(stops)
 
 
 @router.post("/routes/{rid}/start")

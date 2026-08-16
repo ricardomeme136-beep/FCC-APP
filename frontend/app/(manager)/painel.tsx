@@ -90,16 +90,16 @@ export default function Painel() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         <View style={styles.kpiGrid}>
-          <StatCard testID="kpi-active-trucks" label="Camiões Ativos" value={k.active_trucks} accent={colors.brand} />
-          <StatCard testID="kpi-collections-today" label="Recolhas Hoje" value={k.collections_today} />
+          <StatCard testID="kpi-active-trucks" icon="bus" label="Camiões Ativos" value={k.active_trucks} accent={colors.brand} />
+          <StatCard testID="kpi-collections-today" icon="cube" label="Recolhas Hoje" value={k.collections_today} accent={colors.info} />
         </View>
         <View style={styles.kpiGrid}>
-          <StatCard testID="kpi-completed" label="Concluídas" value={k.completed} accent={colors.success} />
-          <StatCard testID="kpi-failed" label="Falhadas" value={k.failed} accent={colors.error} />
+          <StatCard testID="kpi-completed" icon="checkmark-circle" label="Concluídas" value={k.completed} accent={colors.success} />
+          <StatCard testID="kpi-failed" icon="close-circle" label="Falhadas" value={k.failed} accent={colors.error} />
         </View>
         <View style={styles.kpiGrid}>
-          <StatCard testID="kpi-overdue" label="Em Atraso" value={k.overdue} accent={colors.warning} />
-          <StatCard testID="kpi-incidents" label="Ocorrências Ativas" value={k.active_incidents} accent={colors.error} />
+          <StatCard testID="kpi-overdue" icon="time" label="Em Atraso" value={k.overdue} accent={colors.warning} />
+          <StatCard testID="kpi-incidents" icon="warning" label="Ocorrências Ativas" value={k.active_incidents} accent={colors.error} />
         </View>
 
         <Pressable testID="open-full-map" onPress={() => router.push("/(manager)/mapa")}>
@@ -164,15 +164,15 @@ export default function Painel() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
   iconBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
   kpiGrid: { flexDirection: "row", gap: spacing.md },
-  mapBox: { height: 240, borderWidth: border.width, borderColor: colors.borderStrong },
+  mapBox: { height: 240, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
   mapTag: { position: "absolute", bottom: 8, left: 8, backgroundColor: colors.onSurface, paddingHorizontal: 8, paddingVertical: 4 },
   rowSplit: { flexDirection: "row", gap: spacing.md },
   miniStat: { flex: 1, borderWidth: border.width, padding: spacing.md, backgroundColor: colors.surface },
   alert: { flexDirection: "row", gap: spacing.sm, alignItems: "center", borderWidth: border.width, borderColor: colors.warning, backgroundColor: "#FFFBEB", padding: spacing.md },
-  incidentRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md, backgroundColor: colors.surface },
+  incidentRow: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md, backgroundColor: colors.surface },
   dot: { width: 12, height: 12 },
 });

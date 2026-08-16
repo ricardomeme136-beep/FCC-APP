@@ -90,15 +90,15 @@ export default function CustomerOcorrencias() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  card: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.xs, backgroundColor: colors.surface },
+  card: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.xs, backgroundColor: colors.surface },
   head: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   st: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg },
+  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
   kinds: { gap: spacing.sm, marginTop: spacing.sm },
-  kind: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md, backgroundColor: colors.surface },
+  kind: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md, backgroundColor: colors.surface },
   kindOn: { backgroundColor: colors.onSurface },
-  input: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md, minHeight: 90, fontFamily: fonts.mono, fontSize: 14, color: colors.onSurface, textAlignVertical: "top", marginTop: spacing.sm },
+  input: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md, minHeight: 90, fontFamily: fonts.mono, fontSize: 14, color: colors.onSurface, textAlignVertical: "top", marginTop: spacing.sm },
 });

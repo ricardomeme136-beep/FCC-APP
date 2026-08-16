@@ -112,12 +112,12 @@ function Stat({ label, value }: { label: string; value: any }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
   stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  stepper: { flexDirection: "row", alignItems: "center", borderWidth: border.width, borderColor: colors.borderStrong },
+  stepper: { flexDirection: "row", alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
   stepBtn: { width: 40, height: 40, alignItems: "center", justifyContent: "center" },
-  routeCard: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
+  routeCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
   routeHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   stTag: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
   routeStats: { flexDirection: "row", marginTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },

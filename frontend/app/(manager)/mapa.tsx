@@ -10,34 +10,47 @@ import FleetMap from "@/src/components/FleetMap";
 import { colors, spacing, border, wasteColors, vehicleStatus } from "@/src/theme";
 
 const LAYERS = [
+  { key: "routes", label: "ROTAS", icon: "git-network" as const },
   { key: "trucks", label: "VIATURAS", icon: "bus" as const },
   { key: "containers", label: "CONTENTORES", icon: "cube" as const },
   { key: "incidents", label: "OCORRÊNCIAS", icon: "warning" as const },
   { key: "places", label: "DEPÓSITOS", icon: "business" as const },
 ];
 
+const ROUTE_PALETTE = ["#F97316", "#0EA5E9", "#16A34A", "#A855F7", "#EF4444", "#EAB308"];
+
 export default function Mapa() {
   const [live, setLive] = useState<any[]>([]);
   const [containers, setContainers] = useState<any[]>([]);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [places, setPlaces] = useState<any[]>([]);
-  const [active, setActive] = useState<Record<string, boolean>>({ trucks: true, containers: false, incidents: true, places: true });
+  const [routeLines, setRouteLines] = useState<any[]>([]);
+  const [active, setActive] = useState<Record<string, boolean>>({ routes: true, trucks: true, containers: false, incidents: true, places: true });
   const [selected, setSelected] = useState<any | null>(null);
 
   useEffect(() => {
     (async () => {
-      const [c, inc, dep, fac] = await Promise.all([
+      const [c, inc, dep, fac, routes] = await Promise.all([
         api.get<any[]>("/containers?limit=500"),
         api.get<any[]>("/incidents?status=open"),
         api.get<any[]>("/depots"),
         api.get<any[]>("/facilities"),
+        api.get<any[]>("/routes"),
       ]);
       setContainers(c);
       setIncidents(inc);
       setPlaces([
-        ...dep.map((d) => ({ id: `dep-${d.id}`, lat: d.lat, lng: d.lng, color: colors.onSurface })),
-        ...fac.map((f) => ({ id: `fac-${f.id}`, lat: f.lat, lng: f.lng, color: colors.success })),
+        ...dep.map((d) => ({ id: `dep-${d.id}`, lat: d.lat, lng: d.lng, color: colors.onSurface, kind: "depot" })),
+        ...fac.map((f) => ({ id: `fac-${f.id}`, lat: f.lat, lng: f.lng, color: colors.success, kind: "facility" })),
       ]);
+      // road geometry for in-progress routes
+      const inProg = routes.filter((r) => r.status === "in_progress").slice(0, 6);
+      const geos = await Promise.all(
+        inProg.map((r) => api.get<any>(`/routes/${r.id}/geometry`).catch(() => null))
+      );
+      setRouteLines(
+        geos.map((g, i) => (g && g.coordinates?.length ? { coordinates: g.coordinates, color: ROUTE_PALETTE[i % ROUTE_PALETTE.length], width: 4 } : null)).filter(Boolean)
+      );
     })();
   }, []);
 
@@ -52,11 +65,11 @@ export default function Mapa() {
   const markers: any[] = [];
   if (active.places) markers.push(...places);
   if (active.containers)
-    markers.push(...containers.map((c) => ({ id: `c-${c.id}`, lat: c.lat, lng: c.lng, color: wasteColors[c.waste_type] || colors.info })));
+    markers.push(...containers.map((c) => ({ id: `c-${c.id}`, lat: c.lat, lng: c.lng, color: wasteColors[c.waste_type] || colors.info, kind: "container" })));
   if (active.incidents)
-    markers.push(...incidents.filter((i) => i.lat).map((i) => ({ id: `i-${i.id}`, lat: i.lat, lng: i.lng, color: colors.error })));
+    markers.push(...incidents.filter((i) => i.lat).map((i) => ({ id: `i-${i.id}`, lat: i.lat, lng: i.lng, color: colors.error, kind: "incident" })));
   if (active.trucks)
-    markers.push(...live.map((p) => ({ id: `v-${p.vehicle_id}`, lat: p.lat, lng: p.lng, color: colors.brand })));
+    markers.push(...live.map((p) => ({ id: `v-${p.vehicle_id}`, lat: p.lat, lng: p.lng, color: colors.brand, kind: "truck" })));
 
   const onMarker = async (id: string) => {
     if (id.startsWith("v-")) {
@@ -93,7 +106,7 @@ export default function Mapa() {
       </View>
 
       <View style={styles.mapFill}>
-        <FleetMap markers={markers} onPressMarker={onMarker} />
+        <FleetMap markers={markers} polylines={active.routes ? routeLines : []} onPressMarker={onMarker} />
       </View>
 
       {selected && (
@@ -130,19 +143,19 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   chipRowWrap: { borderBottomWidth: border.width, borderBottomColor: colors.borderStrong },
   chipRow: { paddingHorizontal: spacing.lg, paddingVertical: spacing.sm, gap: spacing.sm, alignItems: "center" },
   chip: {
     height: 36, flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 0,
-    paddingHorizontal: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong,
+    paddingHorizontal: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     backgroundColor: colors.surface,
   },
   chipOn: { backgroundColor: colors.onSurface },
   mapFill: { flex: 1, padding: spacing.md },
   detail: {
     position: "absolute", left: spacing.md, right: spacing.md, bottom: spacing.md,
-    backgroundColor: colors.surface, borderWidth: border.width, borderColor: colors.borderStrong,
+    backgroundColor: colors.surface, borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     padding: spacing.lg, gap: spacing.sm,
   },
   detailHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },

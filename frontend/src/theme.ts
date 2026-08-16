@@ -1,31 +1,38 @@
-import { Platform } from "react-native";
+import { Platform, ViewStyle } from "react-native";
 
-// WasteFlow — Brutalist Mobile LIGHT design system.
+// WasteFlow — Modern Soft Light design system.
 export const colors = {
+  bg: "#F4F6F9",
   surface: "#FFFFFF",
-  onSurface: "#0A0A0A",
-  surfaceSecondary: "#F4F4F5",
-  onSurfaceSecondary: "#18181B",
-  surfaceTertiary: "#E4E4E7",
-  onSurfaceTertiary: "#27272A",
-  surfaceInverse: "#0A0A0A",
+  surfaceSecondary: "#F1F3F7",
+  surfaceTertiary: "#E7EAF0",
+  onSurface: "#111827",
+  onSurfaceSecondary: "#374151",
   onSurfaceInverse: "#FFFFFF",
+  surfaceInverse: "#111827",
+
   brand: "#F97316",
-  onBrand: "#0A0A0A",
-  brandTertiary: "#FFEDD5",
-  onBrandTertiary: "#C2410C",
-  success: "#059669",
+  onBrand: "#FFFFFF",
+  brandSoft: "#FFF1E8",
+  onBrandSoft: "#C2410C",
+
+  success: "#16A34A",
+  successSoft: "#DCFCE7",
   onSuccess: "#FFFFFF",
   warning: "#F59E0B",
-  onWarning: "#0A0A0A",
-  error: "#DC2626",
+  warningSoft: "#FEF3C7",
+  onWarning: "#3A2A05",
+  error: "#EF4444",
+  errorSoft: "#FEE2E2",
   onError: "#FFFFFF",
-  info: "#3F3F46",
+  info: "#0EA5E9",
+  infoSoft: "#E0F2FE",
   onInfo: "#FFFFFF",
-  border: "#E4E4E7",
-  borderStrong: "#0A0A0A",
-  divider: "#E4E4E7",
-  muted: "#71717A",
+
+  border: "#E6E8EE",
+  borderStrong: "#E6E8EE",
+  divider: "#EEF0F4",
+  muted: "#6B7280",
 };
 
 export const spacing = {
@@ -38,19 +45,30 @@ export const spacing = {
   "3xl": 48,
 };
 
-export const radius = { sm: 0, md: 0, lg: 0, pill: 0 };
+export const radius = { xs: 8, sm: 12, md: 14, lg: 18, xl: 24, pill: 999 };
 
 export const fonts = {
   display: "SpaceGrotesk-Bold",
-  displayMedium: "SpaceGrotesk-Medium",
-  mono: "Mono",
-  monoMedium: "Mono-Medium",
-  monoBold: "Mono-Bold",
+  displayMedium: "SpaceGrotesk-SemiBold",
+  mono: "SpaceGrotesk-Regular",
+  monoMedium: "SpaceGrotesk-Medium",
+  monoBold: "SpaceGrotesk-SemiBold",
 };
 
-export const border = {
-  width: 2,
-  color: colors.borderStrong,
+// legacy shim (some screens still read border.width / border.color)
+export const border = { width: 1, color: colors.border };
+
+export const shadows: Record<string, ViewStyle> = {
+  sm: Platform.select({
+    ios: { shadowColor: "#0F172A", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+    android: { elevation: 1 },
+    default: {},
+  }) as ViewStyle,
+  card: Platform.select({
+    ios: { shadowColor: "#0F172A", shadowOpacity: 0.08, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
+    android: { elevation: 3 },
+    default: { boxShadow: "0 6px 18px rgba(15,23,42,0.08)" } as any,
+  }) as ViewStyle,
 };
 
 // ---- Status maps (PT-PT) ----
@@ -94,14 +112,14 @@ export const incidentStatus: Record<string, { label: string; color: string }> = 
 };
 
 export const wasteColors: Record<string, string> = {
-  general: "#3F3F46",
+  general: "#64748B",
   paper: "#2563EB",
   plastic: "#F59E0B",
-  glass: "#059669",
+  glass: "#16A34A",
   organic: "#92400E",
   food: "#B45309",
   commercial: "#7C2D12",
-  other: "#0A0A0A",
+  other: "#111827",
 };
 
 export const wasteLabels: Record<string, string> = {
@@ -135,5 +153,3 @@ export const incidentKindLabels: Record<string, string> = {
   new_container: "Pedido de novo contentor",
   other: "Outro",
 };
-
-export const monoFamily = Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" });

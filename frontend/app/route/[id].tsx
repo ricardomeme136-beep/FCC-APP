@@ -11,11 +11,13 @@ export default function RouteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const toast = useToast();
   const [route, setRoute] = useState<any | null>(null);
+  const [geo, setGeo] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const r = await api.get<any>(`/routes/${id}`);
     setRoute(r);
+    api.get<any>(`/routes/${id}/geometry`).then(setGeo).catch(() => {});
   }, [id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
@@ -25,10 +27,10 @@ export default function RouteDetail() {
   const st = routeStatus[route.status] || routeStatus.scheduled;
   const tasks = route.tasks || [];
   const markers = tasks.map((t: any, i: number) => ({
-    id: t.id, lat: t.lat, lng: t.lng,
+    id: t.id, lat: t.lat, lng: t.lng, kind: "container" as const,
     color: t.status === "collected" ? colors.success : t.status === "failed" ? colors.error : colors.brand,
   }));
-  const polyline = tasks.map((t: any) => ({ latitude: t.lat, longitude: t.lng }));
+  const line = geo?.coordinates?.length ? geo.coordinates : tasks.map((t: any) => ({ latitude: t.lat, longitude: t.lng }));
 
   const reoptimize = async () => {
     setBusy(true);
@@ -45,7 +47,7 @@ export default function RouteDetail() {
     <View style={styles.flex}>
       <ScreenHeader title={route.code} subtitle={st.label} back />
       <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.mapBox}><FleetMap markers={markers} polyline={polyline} /></View>
+        <View style={styles.mapBox}><FleetMap markers={markers} polylines={[{ coordinates: line, color: colors.brand, width: 4 }]} /></View>
 
         <View style={styles.statsRow}>
           <Cell label="RECOLHAS" value={route.num_stops} />
@@ -86,13 +88,13 @@ function Cell({ label, value }: { label: string; value: any }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  mapBox: { height: 200, borderWidth: border.width, borderColor: colors.borderStrong },
-  statsRow: { flexDirection: "row", borderWidth: border.width, borderColor: colors.borderStrong },
+  mapBox: { height: 200, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
+  statsRow: { flexDirection: "row", borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
   cell: { flex: 1, padding: spacing.sm, borderRightWidth: 1, borderRightColor: colors.border, alignItems: "center" },
   actions: { flexDirection: "row", gap: spacing.md },
-  task: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.sm },
+  task: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.sm },
   seq: { width: 32, height: 32, backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center" },
   tstatus: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
 });

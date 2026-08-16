@@ -31,9 +31,9 @@ function Row({ k, v }: { k: string; v: string }) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  hero: { alignItems: "center", gap: spacing.sm, padding: spacing.lg, borderWidth: border.width, borderColor: colors.borderStrong },
-  avatar: { width: 72, height: 72, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  hero: { alignItems: "center", gap: spacing.sm, padding: spacing.lg, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
+  avatar: { width: 72, height: 72, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   row: { flexDirection: "row", justifyContent: "space-between" },
 });

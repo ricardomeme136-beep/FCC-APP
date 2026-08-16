@@ -54,11 +54,11 @@ export default function Estatisticas() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
   grid: { flexDirection: "row", gap: spacing.md },
   barHead: { flexDirection: "row", justifyContent: "space-between" },
-  barTrack: { height: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.borderStrong },
+  barTrack: { height: 14, backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: 16 },
   barFill: { height: "100%" },
   driverRow: { flexDirection: "row", alignItems: "center", gap: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: spacing.sm },
 });

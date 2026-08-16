@@ -53,13 +53,13 @@ export default function Mais() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.lg, paddingBottom: spacing["2xl"] },
-  userCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg },
-  avatar: { width: 56, height: 56, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  userCard: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
+  avatar: { width: 56, height: 56, backgroundColor: colors.brand, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
   tile: {
-    width: "31%", aspectRatio: 1, borderWidth: border.width, borderColor: colors.borderStrong,
+    width: "31%", aspectRatio: 1, borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     alignItems: "center", justifyContent: "center", backgroundColor: colors.surface, padding: spacing.sm,
   },
 });

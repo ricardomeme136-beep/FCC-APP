@@ -7,7 +7,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { api } from "@/src/api";
 import { ScreenHeader } from "@/src/components/Header";
 import { Loading, Txt, useToast } from "@/src/components/ui";
-import { colors, spacing, border, wasteColors, wasteLabels } from "@/src/theme";
+import FleetMap from "@/src/components/FleetMap";
+import { colors, spacing, radius, border, wasteColors, wasteLabels } from "@/src/theme";
 
 const FAIL_REASONS = [
   "Acesso bloqueado", "Contentor desaparecido", "Contentor danificado",
@@ -22,6 +23,8 @@ export default function DriverRota() {
   const toast = useToast();
   const [tasks, setTasks] = useState<any[] | null>(null);
   const [route, setRoute] = useState<any | null>(null);
+  const [geo, setGeo] = useState<any | null>(null);
+  const [truck, setTruck] = useState<any | null>(null);
   const [busy, setBusy] = useState(false);
   const [failOpen, setFailOpen] = useState(false);
 
@@ -31,10 +34,22 @@ export default function DriverRota() {
     const rid = t[0]?.route_id;
     if (rid) {
       try { setRoute(await api.get<any>(`/routes/${rid}`)); } catch {}
+      api.get<any>(`/routes/${rid}/geometry`).then(setGeo).catch(() => {});
+    }
+    const vid = t[0]?.vehicle_id;
+    if (vid) {
+      api.get<any[]>("/gps/live").then((live) => setTruck(live.find((p) => p.vehicle_id === vid) || null)).catch(() => {});
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    load();
+    const timer = setInterval(() => {
+      const vid = (tasks || [])[0]?.vehicle_id;
+      if (vid) api.get<any[]>("/gps/live").then((live) => setTruck(live.find((p) => p.vehicle_id === vid) || null)).catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [load]));
 
   const next = useMemo(
     () => (tasks || []).find((t) => ["scheduled", "en_route", "arrived"].includes(t.status)),
@@ -94,6 +109,20 @@ export default function DriverRota() {
           </View>
         )}
 
+        <Txt variant="label">NAVEGAÇÃO</Txt>
+        <View style={styles.mapCard}>
+          <FleetMap
+            markers={[
+              ...(truck ? [{ id: "truck", lat: truck.lat, lng: truck.lng, color: colors.onSurface, kind: "truck" as const }] : []),
+              { id: "next", lat: next.lat, lng: next.lng, color: colors.brand, kind: "next" as const },
+              ...(tasks || []).filter((t) => t.id !== next.id && ["scheduled", "en_route"].includes(t.status)).slice(0, 40)
+                .map((t) => ({ id: t.id, lat: t.lat, lng: t.lng, color: colors.muted, kind: "container" as const })),
+            ]}
+            polylines={geo?.coordinates?.length ? [{ coordinates: geo.coordinates, color: colors.brand, width: 4 }] : []}
+            center={{ lat: next.lat, lng: next.lng }}
+          />
+        </View>
+
         <Txt variant="label">PRÓXIMA RECOLHA</Txt>
         <View style={styles.nextCard}>
           <View style={styles.nextHead}>
@@ -146,17 +175,18 @@ function BigBtn({ title, icon, bg, fg, onPress, disabled, testID }: any) {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md },
-  summary: { backgroundColor: colors.onSurface, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.sm },
+  summary: { backgroundColor: colors.onSurface, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm },
   summaryRow: { flexDirection: "row", justifyContent: "space-between" },
-  nextCard: { borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
+  nextCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
+  mapCard: { height: 200, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
   nextHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
   wasteBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
   grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  big: { width: "47%", flexGrow: 1, height: 110, borderWidth: border.width, borderColor: colors.borderStrong, alignItems: "center", justifyContent: "center" },
+  big: { width: "47%", flexGrow: 1, height: 110, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, alignItems: "center", justifyContent: "center" },
   done: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, padding: spacing.xl },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.borderStrong, padding: spacing.lg },
-  reason: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.md },
+  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
+  reason: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md },
 });

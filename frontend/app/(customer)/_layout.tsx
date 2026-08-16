@@ -16,12 +16,12 @@ export default function CustomerLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: colors.onSurface,
+        tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {
           backgroundColor: colors.surface,
           borderTopWidth: border.width,
-          borderTopColor: colors.borderStrong,
+          borderTopColor: colors.divider,
           height: 60 + insets.bottom,
           paddingBottom: insets.bottom + 5,
           paddingTop: 6,

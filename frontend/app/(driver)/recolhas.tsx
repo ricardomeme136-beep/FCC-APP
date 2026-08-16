@@ -38,9 +38,9 @@ export default function DriverRecolhas() {
 }
 
 const styles = StyleSheet.create({
-  flex: { flex: 1, backgroundColor: colors.surface },
+  flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.sm, paddingBottom: spacing["2xl"] },
-  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.borderStrong, padding: spacing.sm },
+  row: { flexDirection: "row", alignItems: "center", gap: spacing.md, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.sm },
   seq: { width: 34, height: 34, backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center" },
   st: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
 });
