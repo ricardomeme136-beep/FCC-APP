@@ -72,34 +72,38 @@ def optimize_single(start: Tuple[float, float], end: Tuple[float, float],
             "duration_min": round(duration, 1)}
 
 
-def generate_routes(containers: List[dict], trucks: List[dict],
+def generate_routes(stops: List[dict], trucks: List[dict],
                     depot: Tuple[float, float],
                     facility_for: Dict[str, Tuple[float, float]]) -> List[Dict]:
-    """Cluster containers across trucks respecting capacity + waste-type, then
+    """Cluster stops across trucks respecting capacity + waste-type, then
     optimize each cluster.
 
-    containers: [{id, lat, lng, waste_type, load_kg, priority}]
+    stops: [{id, lat, lng, waste_type(s), load_kg, priority}] — either raw
+        containers (legacy single `waste_type` str) or grouped paragens
+        (`waste_types` list, several containers per stop). Both shapes are
+        accepted so existing callers keep working unchanged.
     trucks: [{id, capacity_kg, allowed_waste_types}]
     facility_for: waste_type -> (lat,lng) compatible disposal facility
     """
     if not trucks:
         return []
 
-    # Bucket containers a truck can legally carry, seeded round-robin by a
+    # Bucket stops a truck can legally carry, seeded round-robin by a
     # geographic sweep (angle from depot) for balanced, contiguous clusters.
     import math
-    containers = sorted(
-        containers,
+    stops = sorted(
+        stops,
         key=lambda c: math.atan2(c["lat"] - depot[0], c["lng"] - depot[1]),
     )
 
     clusters: List[List[dict]] = [[] for _ in trucks]
     loads = [0.0 for _ in trucks]
-    for c in containers:
+    for c in stops:
+        types = set(_waste_types(c))
         candidates = [
             i for i, t in enumerate(trucks)
             if (not t.get("allowed_waste_types")
-                or c["waste_type"] in t["allowed_waste_types"])
+                or types.issubset(set(t["allowed_waste_types"])))
             and loads[i] + c.get("load_kg", 0) <= t["capacity_kg"]
         ]
         if not candidates:
@@ -136,10 +140,22 @@ def _cluster_dist(cluster: List[dict], c: dict) -> float:
     return haversine((last["lat"], last["lng"]), (c["lat"], c["lng"]))
 
 
+def _waste_types(stop: dict) -> List[str]:
+    """Accepts either a raw container (`waste_type` str) or a grouped stop
+    (`waste_types` list) — lets generate_routes() take both shapes."""
+    if "waste_types" in stop:
+        return stop["waste_types"]
+    return [stop["waste_type"]]
+
+
 def _dominant_waste(cluster: List[dict]) -> str:
     if not cluster:
         return "general"
     counts: Dict[str, int] = {}
     for c in cluster:
-        counts[c["waste_type"]] = counts.get(c["waste_type"], 0) + 1
+        # weight by container count so a 1-container stop doesn't outrank a
+        # 3-container stop of a different type
+        weight = len(c["container_ids"]) if "container_ids" in c else 1
+        for wt in _waste_types(c):
+            counts[wt] = counts.get(wt, 0) + weight
     return max(counts, key=counts.get)

@@ -1,97 +1,78 @@
-import { useCallback, useMemo, useState } from "react";
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
-import { useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
+import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
 import { getCurrentLocation } from "@/src/utils/location";
 import { ScreenHeader } from "@/src/components/Header";
-import { Loading, Txt, useToast } from "@/src/components/ui";
-import FleetMap from "@/src/components/FleetMap";
-import { colors, spacing, radius, border, wasteColors, wasteLabels } from "@/src/theme";
-
-const FAIL_REASONS = [
-  "Acesso bloqueado", "Contentor desaparecido", "Contentor danificado",
-  "Estrada bloqueada", "Localização insegura", "Contentor cheio",
-  "Contentor errado", "Avaria do veículo", "Problema com o cliente", "Outro",
-];
+import { Btn, Loading, Txt, useToast } from "@/src/components/ui";
+import { colors, spacing, border, radius, routeStatus } from "@/src/theme";
 
 const TODAY = new Date().toISOString().slice(0, 10);
+const STATUS_PRIORITY: Record<string, number> = { in_progress: 0, scheduled: 1, completed: 2, cancelled: 3 };
 
 export default function DriverRota() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const [tasks, setTasks] = useState<any[] | null>(null);
-  const [route, setRoute] = useState<any | null>(null);
-  const [geo, setGeo] = useState<any | null>(null);
-  const [truck, setTruck] = useState<any | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failOpen, setFailOpen] = useState(false);
+
+  const [routesToday, setRoutesToday] = useState<any[] | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<any | null>(null);
+  const [starting, setStarting] = useState(false);
 
   const load = useCallback(async () => {
-    const t = await api.get<any[]>(`/collection-tasks?mine=true&date=${TODAY}`);
-    setTasks(t);
-    const rid = t[0]?.route_id;
-    if (rid) {
-      try { setRoute(await api.get<any>(`/routes/${rid}`)); } catch {}
-      api.get<any>(`/routes/${rid}/geometry`).then(setGeo).catch(() => {});
+    const all = await api.get<any[]>("/routes");
+    const mine = all
+      .filter((r) => r.date === TODAY)
+      .sort((a, b) => (STATUS_PRIORITY[a.status] ?? 9) - (STATUS_PRIORITY[b.status] ?? 9));
+    setRoutesToday(mine);
+    if (mine.length === 1) setSelectedId(mine[0].id);
+    else if (mine.length > 1 && !selectedId) setSelectedId(mine[0].id);
+  }, [selectedId]);
+
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  useEffect(() => {
+    if (!selectedId) { setDetail(null); return; }
+    api.get<any>(`/routes/${selectedId}`).then(setDetail).catch(() => setDetail(null));
+  }, [selectedId]);
+
+  const beginRoute = async () => {
+    if (!detail) return;
+    setStarting(true);
+    try {
+      let gps: any = {};
+      try {
+        const pos = await getCurrentLocation();
+        gps = { lat: pos.lat, lng: pos.lng };
+      } catch {
+        toast("Não foi possível obter a localização inicial — a rota vai iniciar na mesma", "info");
+      }
+      await api.post(`/routes/${detail.id}/start`, gps);
+      router.replace("/(driver)/navegacao");
+    } catch (e: any) {
+      toast(e?.message || "Erro ao iniciar a rota", "error");
+    } finally {
+      setStarting(false);
     }
-    const vid = t[0]?.vehicle_id;
-    if (vid) {
-      api.get<any[]>("/gps/live").then((live) => setTruck(live.find((p) => p.vehicle_id === vid) || null)).catch(() => {});
-    }
-  }, []);
-
-  useFocusEffect(useCallback(() => {
-    load();
-    const timer = setInterval(() => {
-      const vid = (tasks || [])[0]?.vehicle_id;
-      if (vid) api.get<any[]>("/gps/live").then((live) => setTruck(live.find((p) => p.vehicle_id === vid) || null)).catch(() => {});
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [load]));
-
-  const next = useMemo(
-    () => (tasks || []).find((t) => ["scheduled", "en_route", "arrived"].includes(t.status)),
-    [tasks]
-  );
-  const done = (tasks || []).filter((t) => t.status === "collected").length;
-  const remaining = (tasks || []).filter((t) => ["scheduled", "en_route", "arrived"].includes(t.status)).length;
-
-  const act = async (fn: () => Promise<any>, msg: string) => {
-    setBusy(true);
-    try { await fn(); toast(msg, "success"); await load(); }
-    catch (e: any) { toast(e?.message || "Erro", "error"); } finally { setBusy(false); }
   };
 
-  const collect = () => next && act(async () => {
-    const { lat, lng } = await getCurrentLocation();
-    return api.post(`/collection-tasks/${next.id}/complete`, { lat, lng });
-  }, "Recolha registada");
-  const ignore = () => next && act(() => api.post(`/collection-tasks/${next.id}/ignore`), "Recolha ignorada");
-  const fail = (reason: string) => {
-    setFailOpen(false);
-    if (next) act(() => api.post(`/collection-tasks/${next.id}/fail`, { reason }), "Problema comunicado");
-  };
-  const navigate = () => {
-    if (!next) return;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${next.lat},${next.lng}`;
-    Linking.openURL(url).catch(() => toast("Não foi possível abrir a navegação", "error"));
-  };
+  const continueRoute = () => router.replace("/(driver)/navegacao");
 
-  if (!tasks) {
-    return (<View style={styles.flex}><ScreenHeader title="A MINHA ROTA DE HOJE" subtitle="MOTORISTA" dark /><Loading text="A SINCRONIZAR ROTA..." /></View>);
+  if (!routesToday) {
+    return (<View style={styles.flex}><ScreenHeader title="A SUA ROTA DE HOJE" subtitle="MOTORISTA" dark /><Loading text="A PROCURAR ROTA..." /></View>);
   }
 
-  if (!next) {
+  if (routesToday.length === 0) {
     return (
       <View style={styles.flex}>
-        <ScreenHeader title="A MINHA ROTA DE HOJE" subtitle="MOTORISTA" dark />
-        <View style={styles.done}>
-          <Ionicons name="checkmark-done-circle" size={72} color={colors.success} />
-          <Txt variant="display" style={{ textAlign: "center" }}>O SEU TURNO TERMINOU</Txt>
-          <Txt variant="mono" color={colors.muted}>{done} recolhas concluídas hoje.</Txt>
+        <ScreenHeader title="A SUA ROTA DE HOJE" subtitle="MOTORISTA" dark />
+        <View style={styles.center}>
+          <Ionicons name="calendar-outline" size={64} color={colors.muted} />
+          <Txt variant="displaySm" style={{ textAlign: "center" }}>Não tem nenhuma rota atribuída para hoje.</Txt>
         </View>
       </View>
     );
@@ -99,98 +80,85 @@ export default function DriverRota() {
 
   return (
     <View style={styles.flex}>
-      <ScreenHeader title="A MINHA ROTA DE HOJE" subtitle={route?.code || "MOTORISTA"} dark />
+      <ScreenHeader title="A SUA ROTA DE HOJE" subtitle="MOTORISTA" dark />
       <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + spacing.lg }]}>
-        {route && (
-          <View style={styles.summary}>
-            <Txt variant="display" color={colors.brand}>{route.code}</Txt>
-            <View style={styles.summaryRow}>
-              <SumCell label="RECOLHAS" value={route.num_stops} />
-              <SumCell label="DISTÂNCIA" value={`${route.distance_km}km`} />
-              <SumCell label="ESTIMADO" value={`${Math.floor(route.duration_min / 60)}h${Math.round(route.duration_min % 60)}`} />
+        {routesToday.length > 1 && (
+          <>
+            <Txt variant="label">AS SUAS ROTAS DE HOJE</Txt>
+            <View style={styles.list}>
+              {routesToday.map((r) => {
+                const st = routeStatus[r.status] || routeStatus.scheduled;
+                return (
+                  <Pressable key={r.id} testID={`today-route-${r.id}`} onPress={() => setSelectedId(r.id)}
+                    style={[styles.listRow, selectedId === r.id ? styles.listRowActive : null]}>
+                    <Txt variant="monoBold">{r.code}</Txt>
+                    <View style={[styles.stTag, { backgroundColor: st.color }]}>
+                      <Txt variant="monoBold" color="#fff" style={{ fontSize: 10 }}>{st.label}</Txt>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </View>
-            <Txt variant="monoBold" color={colors.brand}>{done} concluídas · {remaining} restantes</Txt>
-          </View>
+          </>
         )}
 
-        <Txt variant="label">NAVEGAÇÃO</Txt>
-        <View style={styles.mapCard}>
-          <FleetMap
-            markers={[
-              ...(truck ? [{ id: "truck", lat: truck.lat, lng: truck.lng, color: colors.onSurface, kind: "truck" as const }] : []),
-              { id: "next", lat: next.lat, lng: next.lng, color: colors.brand, kind: "next" as const },
-              ...(tasks || []).filter((t) => t.id !== next.id && ["scheduled", "en_route"].includes(t.status)).slice(0, 40)
-                .map((t) => ({ id: t.id, lat: t.lat, lng: t.lng, color: colors.muted, kind: "container" as const })),
-            ]}
-            polylines={geo?.coordinates?.length ? [{ coordinates: geo.coordinates, color: colors.brand, width: 4 }] : []}
-            center={{ lat: next.lat, lng: next.lng }}
-          />
-        </View>
-
-        <Txt variant="label">PRÓXIMA RECOLHA</Txt>
-        <View style={styles.nextCard}>
-          <View style={styles.nextHead}>
-            <View style={[styles.wasteBadge, { backgroundColor: wasteColors[next.waste_type] }]}>
-              <Txt variant="monoBold" color="#fff" style={{ fontSize: 10 }}>#{next.sequence}</Txt>
+        {!detail ? (
+          <Loading />
+        ) : (
+          <View style={styles.summary}>
+            <Txt variant="display" color={colors.brand}>{detail.code}</Txt>
+            <Row label="Viatura" value={detail.vehicle_id ? (detail.vehicle_plate || "Atribuída") : "Sem viatura"} />
+            <Row label="Estado" value={(routeStatus[detail.status] || routeStatus.scheduled).label} />
+            <View style={styles.summaryGrid}>
+              <SumCell label="PARAGENS" value={(detail.stops || []).length} />
+              <SumCell label="CONTENTORES" value={(detail.tasks || []).length} />
+              <SumCell label="DISTÂNCIA" value={`${detail.distance_km}km`} />
+              <SumCell label="ESTIMADO" value={`${Math.floor(detail.duration_min / 60)}h${Math.round(detail.duration_min % 60)}`} />
             </View>
-            <Txt variant="mono" color={colors.muted}>{wasteLabels[next.waste_type] || next.waste_type}</Txt>
+
+            {detail.status === "scheduled" && (
+              <Btn testID="begin-route" title="COMEÇAR ROTA" icon="play" size="xl" loading={starting} onPress={beginRoute} style={{ marginTop: spacing.lg }} />
+            )}
+            {detail.status === "in_progress" && (
+              <Btn testID="continue-route" title="CONTINUAR ROTA" icon="navigate" size="xl" variant="success" onPress={continueRoute} style={{ marginTop: spacing.lg }} />
+            )}
+            {(detail.status === "completed" || detail.status === "cancelled") && (
+              <View style={styles.doneBox}>
+                <Ionicons name="checkmark-done-circle" size={40} color={colors.success} />
+                <Txt variant="monoBold" color={colors.muted}>{(routeStatus[detail.status] || routeStatus.scheduled).label}</Txt>
+              </View>
+            )}
           </View>
-          <Txt variant="displaySm" numberOfLines={2}>{next.address || "Sem morada"}</Txt>
-        </View>
-
-        <View style={styles.grid}>
-          <BigBtn testID="btn-navegar" title="NAVEGAR" icon="navigate" bg={colors.brand} fg={colors.onBrand} onPress={navigate} disabled={busy} />
-          <BigBtn testID="btn-recolhido" title="RECOLHIDO" icon="checkmark" bg={colors.success} fg="#fff" onPress={collect} disabled={busy} />
-          <BigBtn testID="btn-problema" title="PROBLEMA" icon="warning" bg={colors.error} fg="#fff" onPress={() => setFailOpen(true)} disabled={busy} />
-          <BigBtn testID="btn-ignorar" title="IGNORAR" icon="play-skip-forward" bg={colors.surfaceSecondary} fg={colors.onSurface} onPress={ignore} disabled={busy} />
-        </View>
+        )}
       </ScrollView>
+    </View>
+  );
+}
 
-      <Modal visible={failOpen} transparent animationType="slide" onRequestClose={() => setFailOpen(false)}>
-        <Pressable style={styles.backdrop} onPress={() => setFailOpen(false)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
-            <Txt variant="displaySm">MOTIVO DO PROBLEMA</Txt>
-            <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
-              {FAIL_REASONS.map((r) => (
-                <Pressable key={r} testID={`fail-${r}`} style={styles.reason} onPress={() => fail(r)}>
-                  <Txt variant="monoBold">{r}</Txt>
-                  <Ionicons name="chevron-forward" size={18} color={colors.muted} />
-                </Pressable>
-              ))}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
+function Row({ label, value }: { label: string; value: any }) {
+  return (
+    <View style={styles.row}>
+      <Txt variant="mono" color="#A1A1AA">{label}</Txt>
+      <Txt variant="monoBold" color="#fff">{value}</Txt>
     </View>
   );
 }
 
 function SumCell({ label, value }: { label: string; value: any }) {
-  return (<View><Txt variant="monoBold" color="#FFFFFF" style={{ fontSize: 18 }}>{value}</Txt><Txt variant="label" color="#A1A1AA">{label}</Txt></View>);
-}
-
-function BigBtn({ title, icon, bg, fg, onPress, disabled, testID }: any) {
-  return (
-    <Pressable testID={testID} disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.big, { backgroundColor: bg, opacity: disabled ? 0.6 : pressed ? 0.85 : 1 }]}>
-      <Ionicons name={icon} size={34} color={fg} />
-      <Txt variant="monoBold" color={fg} style={{ fontSize: 16, marginTop: spacing.xs }}>{title}</Txt>
-    </Pressable>
-  );
+  return (<View style={styles.sumCell}><Txt variant="monoBold" color="#FFFFFF" style={{ fontSize: 18 }}>{value}</Txt><Txt variant="label" color="#A1A1AA">{label}</Txt></View>);
 }
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, padding: spacing.xl },
+  list: { gap: spacing.sm },
+  listRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, backgroundColor: colors.surface },
+  listRowActive: { borderColor: colors.brand, backgroundColor: colors.brandSoft },
+  stTag: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: 8 },
   summary: { backgroundColor: colors.onSurface, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm },
-  summaryRow: { flexDirection: "row", justifyContent: "space-between" },
-  nextCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
-  mapCard: { height: 200, borderRadius: radius.lg, overflow: "hidden", backgroundColor: colors.surfaceSecondary },
-  nextHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
-  wasteBadge: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  grid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md },
-  big: { width: "47%", flexGrow: 1, height: 110, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, alignItems: "center", justifyContent: "center" },
-  done: { flex: 1, alignItems: "center", justifyContent: "center", gap: spacing.md, padding: spacing.xl },
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
-  reason: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md },
+  row: { flexDirection: "row", justifyContent: "space-between" },
+  summaryGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginTop: spacing.sm },
+  sumCell: { width: "47%" },
+  doneBox: { alignItems: "center", gap: spacing.xs, marginTop: spacing.lg },
 });

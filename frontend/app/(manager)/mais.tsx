@@ -10,6 +10,7 @@ import { colors, spacing, border, roleLabels } from "@/src/theme";
 const ITEMS: { label: string; icon: keyof typeof Ionicons.glyphMap; route: string }[] = [
   { label: "Viaturas", icon: "bus", route: "/viaturas" },
   { label: "Motoristas", icon: "people", route: "/motoristas" },
+  { label: "Utilizadores", icon: "person-circle", route: "/utilizadores" },
   { label: "Clientes", icon: "briefcase", route: "/clientes" },
   { label: "Depósitos", icon: "business", route: "/depositos" },
   { label: "Centros", icon: "leaf", route: "/centros" },

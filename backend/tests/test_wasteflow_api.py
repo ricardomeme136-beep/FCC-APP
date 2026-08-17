@@ -3,7 +3,8 @@ import os
 import time
 import requests
 import pytest
-from conftest import API, PASSWORD
+from conftest import (API, PASSWORD, ADMIN_EMAIL, ADMIN_B_EMAIL, DISPATCHER_EMAIL,
+                      DRIVER_EMAIL, MANAGER_EMAIL, CUSTOMER_EMAIL)
 
 
 # ---------- Auth ----------
@@ -15,12 +16,12 @@ class TestAuth:
 
     def test_login_all_roles(self):
         for email in [
-            "admin@wasteflow.pt", "despachante@wasteflow.pt",
-            "motorista@wasteflow.pt", "cliente@wasteflow.pt",
-            "gestor@wasteflow.pt", "admin@suma.pt",
+            ADMIN_EMAIL, DISPATCHER_EMAIL,
+            DRIVER_EMAIL, CUSTOMER_EMAIL,
+            MANAGER_EMAIL, ADMIN_B_EMAIL,
         ]:
             r = requests.post(f"{API}/auth/login",
-                              json={"email": email, "password": PASSWORD}, timeout=15)
+                              json={"identifier": email, "password": PASSWORD}, timeout=15)
             assert r.status_code == 200, f"{email} -> {r.status_code} {r.text}"
             data = r.json()
             assert data.get("access_token")
@@ -28,7 +29,7 @@ class TestAuth:
 
     def test_login_invalid_password(self):
         r = requests.post(f"{API}/auth/login",
-                          json={"email": "admin@wasteflow.pt", "password": "wrong"}, timeout=10)
+                          json={"identifier": ADMIN_EMAIL, "password": "wrong"}, timeout=10)
         assert r.status_code == 401
 
     def test_me(self, h_admin_fcc):

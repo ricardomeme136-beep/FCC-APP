@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -16,26 +15,23 @@ import { useAuth, homeForRole } from "@/src/auth/AuthContext";
 import { Btn, Txt, useToast } from "@/src/components/ui";
 import { colors, fonts, spacing, border } from "@/src/theme";
 
-const DEMO = [
-  { label: "Administrador", email: "admin@wasteflow.pt" },
-  { label: "Despachante", email: "despachante@wasteflow.pt" },
-  { label: "Motorista", email: "motorista@wasteflow.pt" },
-  { label: "Cliente", email: "cliente@wasteflow.pt" },
-];
-
 export default function Login() {
   const { login } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
-  const [email, setEmail] = useState("admin@wasteflow.pt");
-  const [password, setPassword] = useState("WasteFlow2026!");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   const onLogin = async () => {
+    if (!identifier.trim() || !password) {
+      toast("Introduza o email ou número e a palavra-passe", "error");
+      return;
+    }
     setBusy(true);
     try {
-      await login(email, password);
+      await login(identifier, password);
       const me = await (await import("@/src/api")).api.get<any>("/auth/me");
       router.replace(homeForRole(me.role) as any);
     } catch (e: any) {
@@ -52,11 +48,8 @@ export default function Login() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.brandRow}>
-          <View style={styles.logoMark}>
-            <Txt variant="display" color={colors.onBrand} style={{ fontSize: 26 }}>W</Txt>
-          </View>
+          <Image source={require("@/assets/images/fcc-logo.png")} style={styles.logoMark} contentFit="contain" />
           <View>
-            <Txt variant="display" style={{ fontSize: 28 }}>WASTEFLOW</Txt>
             <Txt variant="label">GESTÃO DE RECOLHA DE RESÍDUOS</Txt>
           </View>
         </View>
@@ -68,15 +61,15 @@ export default function Login() {
         />
 
         <View style={styles.form}>
-          <Txt variant="label">EMAIL</Txt>
+          <Txt variant="label">EMAIL OU Nº DE MOTORISTA</Txt>
           <TextInput
             testID="login-email-input"
             style={styles.input}
-            value={email}
-            onChangeText={setEmail}
+            value={identifier}
+            onChangeText={setIdentifier}
             autoCapitalize="none"
-            keyboardType="email-address"
-            placeholder="email@empresa.pt"
+            autoComplete="username"
+            placeholder="email@empresa.pt ou nº de motorista"
             placeholderTextColor={colors.muted}
           />
           <Txt variant="label" style={{ marginTop: spacing.md }}>PALAVRA-PASSE</Txt>
@@ -86,6 +79,7 @@ export default function Login() {
             value={password}
             onChangeText={setPassword}
             secureTextEntry
+            autoComplete="password"
             placeholder="••••••••"
             placeholderTextColor={colors.muted}
           />
@@ -99,22 +93,9 @@ export default function Login() {
             style={{ marginTop: spacing.lg }}
           />
 
-          <Txt variant="label" style={{ marginTop: spacing.xl, marginBottom: spacing.sm }}>ACESSO RÁPIDO (DEMO)</Txt>
-          <View style={styles.demoWrap}>
-            {DEMO.map((d) => (
-              <Pressable
-                key={d.email}
-                testID={`demo-${d.label}`}
-                style={styles.demoChip}
-                onPress={() => {
-                  setEmail(d.email);
-                  setPassword("WasteFlow2026!");
-                }}
-              >
-                <Txt variant="monoBold" style={{ fontSize: 11 }}>{d.label}</Txt>
-              </Pressable>
-            ))}
-          </View>
+          <Txt variant="label" style={{ marginTop: spacing.lg, textAlign: "center" }} color={colors.muted}>
+            ESQUECEU-SE DA PALAVRA-PASSE? CONTACTE O ADMINISTRADOR
+          </Txt>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -126,9 +107,8 @@ const styles = StyleSheet.create({
   scroll: { paddingHorizontal: spacing.lg, gap: spacing.lg },
   brandRow: { flexDirection: "row", alignItems: "center", gap: spacing.md },
   logoMark: {
-    width: 52, height: 52, backgroundColor: colors.brand,
-    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
-    alignItems: "center", justifyContent: "center",
+    width: 108, height: 51, borderRadius: 12, overflow: "hidden",
+    borderWidth: border.width, borderColor: colors.border,
   },
   hero: { width: "100%", height: 150, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
   form: { gap: spacing.xs },
@@ -136,11 +116,5 @@ const styles = StyleSheet.create({
     borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
     paddingHorizontal: spacing.md, height: 50, fontFamily: fonts.mono,
     fontSize: 15, color: colors.onSurface, backgroundColor: colors.surface,
-  },
-  demoWrap: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
-  demoChip: {
-    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    backgroundColor: colors.surfaceSecondary,
   },
 });

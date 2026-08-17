@@ -1,17 +1,21 @@
-"""Idempotent demo data seeder for WasteFlow.
+"""Idempotent QA-fixture seeder for the automated test suite.
 
 *** DEVELOPMENT/TEST TOOL ONLY — NEVER RUN THIS AGAINST A PRODUCTION DATABASE. ***
 
-This script is never invoked automatically by the app (server.py does not
-call it, and nothing in the request path does either) — it only ever runs
-when a developer types `python seed_data.py` themselves. Every document it
-creates is tagged `"demo": True`, so `cleanup_demo_data.py` can remove it
-later without any risk of touching real data created through the app.
+The automated pytest suite (tests/conftest.py) needs a stable, always-present
+set of accounts/companies/data to log into and assert against. Historically
+it used seed_data.py's demo data for this — but that data is meant to be
+disposable (see cleanup_demo_data.py) and gets wiped once a real company
+starts using the app for real. This script creates a SEPARATE, permanent
+fixture dataset the test suite owns exclusively, tagged `"test_fixture": True`
+(never `"demo": True`), so cleanup_demo_data.py — which only ever touches
+`demo: true` documents — can never delete it, and it can never be confused
+with a real company's data.
 
-Run:  python seed_data.py            (seeds only if empty)
-      python seed_data.py --force    (wipes demo data and reseeds)
+Run:  python seed_test_fixtures.py            (seeds only if missing)
+      python seed_test_fixtures.py --force    (wipes fixture data and reseeds)
 
-Demo password for every account: WasteFlow2026!
+Fixture password for every account: WasteFlowTest2026!
 """
 import asyncio
 import random
@@ -23,18 +27,19 @@ from core.db import db
 from core.security import hash_password
 from services.optimizer import generate_routes
 
-random.seed(42)
+random.seed(1337)
 NOW = datetime.now(timezone.utc)
 TODAY = NOW.date().isoformat()
-PW = hash_password("WasteFlow2026!")
+PW = hash_password("WasteFlowTest2026!")
 
 LISBON = (38.7223, -9.1393)
 
 WASTE_CODES = ["general", "paper", "plastic", "glass", "organic", "food", "commercial"]
 STREETS = ["Rua Augusta", "Av. da Liberdade", "Rua do Ouro", "Av. Almirante Reis",
-           "Rua da Prata", "Av. de Roma", "Rua Castilho", "Av. da República",
-           "Rua Garrett", "Av. Fontes Pereira de Melo", "Rua de São Bento",
-           "Av. Infante Santo", "Rua Morais Soares", "Av. Estados Unidos"]
+           "Rua da Prata", "Av. de Roma", "Rua Castilho", "Av. da República"]
+
+MAIN_SLUG = "qa-main"
+SECONDARY_SLUG = "qa-secondary"
 
 
 def iso(dt):
@@ -51,70 +56,62 @@ async def _wipe():
               "collection_tasks", "collections", "incidents", "depots", "facilities",
               "customers", "zones", "gps_positions", "notifications", "audit_logs",
               "ai_conversations"]:
-        await db[c].delete_many({"demo": True})
+        await db[c].delete_many({"test_fixture": True})
 
 
 async def seed_company(name, slug, is_main=False):
     cid = str(uuid.uuid4())
     await db.companies.insert_one({
         "id": cid, "slug": slug, "name": name,
-        "created_at": iso(NOW), "demo": True})
+        "created_at": iso(NOW), "test_fixture": True})
 
-    n_drivers = 8 if is_main else 2
-    n_vehicles = 8 if is_main else 2
-    n_containers = 140 if is_main else 20
+    n_drivers = 6 if is_main else 2
+    n_vehicles = 6 if is_main else 2
+    n_containers = 60 if is_main else 15
 
-    # Depots
     depots = []
-    depot_defs = [("Depósito Central", 38.74, -9.15), ("Depósito Sul", 38.70, -9.12)]
+    depot_defs = [("Depósito QA Central", 38.74, -9.15), ("Depósito QA Sul", 38.70, -9.12)]
     for i, (dn, la, ln) in enumerate(depot_defs[: (2 if is_main else 1)]):
         d = {"id": str(uuid.uuid4()), "company_id": cid, "name": dn,
              "address": f"{dn}, Lisboa", "lat": la, "lng": ln,
-             "hours": "06:00 - 22:00", "capacity": "50 viaturas", "demo": True}
+             "hours": "06:00 - 22:00", "capacity": "50 viaturas", "test_fixture": True}
         await db.depots.insert_one(d)
         depots.append(d)
 
-    # Facilities
     facilities = []
     fac_defs = [
-        ("Aterro de Beirolas", "landfill", 38.78, -9.10, ["general", "commercial"]),
-        ("Centro de Reciclagem de Lisboa", "recycling", 38.76, -9.18, ["paper", "plastic", "glass"]),
-        ("Estação de Transferência Norte", "transfer", 38.77, -9.16, WASTE_CODES),
-        ("Centro de Tratamento Orgânico", "treatment", 38.69, -9.19, ["organic", "food"]),
+        ("Aterro QA", "landfill", 38.78, -9.10, ["general", "commercial"]),
+        ("Centro de Reciclagem QA", "recycling", 38.76, -9.18, ["paper", "plastic", "glass"]),
+        ("Estação de Transferência QA", "transfer", 38.77, -9.16, WASTE_CODES),
+        ("Centro de Tratamento Orgânico QA", "treatment", 38.69, -9.19, ["organic", "food"]),
     ]
     for fn, kind, la, ln, acc in fac_defs:
         f = {"id": str(uuid.uuid4()), "company_id": cid, "name": fn, "kind": kind,
              "address": f"{fn}, Lisboa", "lat": la, "lng": ln,
              "accepted_waste_types": acc, "hours": "06:00 - 20:00",
-             "contact": "+351 21 000 0000", "demo": True}
+             "contact": "+351 21 000 0000", "test_fixture": True}
         await db.facilities.insert_one(f)
         facilities.append(f)
 
-    # Zones
     zones = []
-    for zn in ["Zona Centro", "Zona Norte", "Zona Oriental"] if is_main else ["Zona Única"]:
+    for zn in ["Zona QA Centro", "Zona QA Norte"] if is_main else ["Zona QA Única"]:
         z = {"id": str(uuid.uuid4()), "company_id": cid, "name": zn,
-             "frequency": "diária", "team": "Equipa A", "demo": True}
+             "frequency": "diária", "team": "Equipa QA", "test_fixture": True}
         await db.zones.insert_one(z)
         zones.append(z)
 
-    # Customers
     customers = []
-    cust_names = ["Câmara Municipal de Lisboa", "Continente Colombo", "Hospital de Santa Maria",
-                  "Universidade de Lisboa", "El Corte Inglés", "Padaria Central",
-                  "Restaurante O Fado", "Hotel Avenida", "Escola Secundária Camões",
-                  "Mercado da Ribeira", "Ginásio Fitness Hut", "Farmácia Central"]
-    for cn in (cust_names if is_main else cust_names[:3]):
+    cust_names = ["QA Câmara Municipal", "QA Hospital Central", "QA Universidade",
+                  "QA Restaurante", "QA Hotel", "QA Escola"]
+    for cn in (cust_names if is_main else cust_names[:2]):
         c = {"id": str(uuid.uuid4()), "company_id": cid, "name": cn,
-             "email": f"{cn.split()[0].lower()}@cliente.pt", "phone": "+351 21 111 2222",
-             "address": f"{random.choice(STREETS)}, Lisboa", "created_at": iso(NOW), "demo": True}
+             "email": f"{cn.split()[1].lower()}@qa-cliente.test", "phone": "+351 21 111 2222",
+             "address": f"{random.choice(STREETS)}, Lisboa", "created_at": iso(NOW), "test_fixture": True}
         await db.customers.insert_one(c)
         customers.append(c)
 
-    # Drivers
-    driver_names = ["João Silva", "Maria Santos", "Carlos Ferreira", "Ana Costa",
-                    "Pedro Oliveira", "Sofia Rodrigues", "Miguel Almeida", "Rita Marques",
-                    "Tiago Sousa", "Inês Pereira"]
+    driver_names = ["QA Motorista Um", "QA Motorista Dois", "QA Motorista Três",
+                    "QA Motorista Quatro", "QA Motorista Cinco", "QA Motorista Seis"]
     drivers = []
     for i in range(n_drivers):
         d = {"id": str(uuid.uuid4()), "company_id": cid,
@@ -123,36 +120,33 @@ async def seed_company(name, slug, is_main=False):
              "license_number": f"L-{random.randint(100000, 999999)}",
              "license_type": "C+E", "vehicle_id": None, "status": "available",
              "employment_status": "ativo",
-             "created_at": iso(NOW), "demo": True}
+             "created_at": iso(NOW), "test_fixture": True}
         await db.drivers.insert_one(d)
         drivers.append(d)
 
-    # Vehicles
     vehicles = []
-    brands = [("Mercedes", "Econic"), ("Volvo", "FE"), ("Scania", "P320"),
-              ("MAN", "TGS"), ("Renault", "D Wide"), ("Iveco", "Stralis")]
+    brands = [("Mercedes", "Econic"), ("Volvo", "FE"), ("Scania", "P320"), ("MAN", "TGS")]
     for i in range(n_vehicles):
         br, mo = random.choice(brands)
         allowed = [] if random.random() < 0.6 else random.sample(WASTE_CODES, 3)
         v = {"id": str(uuid.uuid4()), "company_id": cid,
-             "plate": f"{random.randint(10, 99)}-{random.choice(['AB','CD','EF','GH'])}-{random.randint(10, 99)}",
+             "plate": f"QA-{random.randint(10, 99)}-{random.randint(10, 99)}",
              "brand": br, "model": mo, "year": random.randint(2016, 2024),
              "capacity_kg": random.choice([8000, 10000, 12000, 16000]),
              "allowed_waste_types": allowed, "driver_id": None,
              "status": "available", "mileage_km": random.randint(50000, 300000),
              "fuel_pct": random.randint(30, 100),
-             "created_at": iso(NOW), "demo": True}
+             "created_at": iso(NOW), "test_fixture": True}
         await db.vehicles.insert_one(v)
         vehicles.append(v)
 
-    # Containers
     containers = []
     freqs = ["diária", "dias alternados", "semanal", "quinzenal"]
     for i in range(n_containers):
         la, ln = rand_coord()
         wt = random.choice(WASTE_CODES)
         c = {"id": str(uuid.uuid4()), "company_id": cid,
-             "qr_code": f"WF-{uuid.uuid4().hex[:8].upper()}",
+             "qr_code": f"QA-{uuid.uuid4().hex[:8].upper()}",
              "address": f"{random.choice(STREETS)}, {random.randint(1, 250)}, Lisboa",
              "lat": la, "lng": ln, "waste_type": wt,
              "container_type": random.choice(["120L", "240L", "800L", "1100L", "Molok"]),
@@ -164,11 +158,10 @@ async def seed_company(name, slug, is_main=False):
              "installed_at": iso(NOW - timedelta(days=random.randint(30, 900))),
              "last_collection": iso(NOW - timedelta(days=random.randint(1, 5))),
              "next_collection": TODAY, "photos": [], "notes": "",
-             "created_at": iso(NOW), "demo": True}
+             "created_at": iso(NOW), "test_fixture": True}
         await db.containers.insert_one(c)
         containers.append(c)
 
-    # Routes via optimizer (main company only, richer)
     if is_main:
         await _build_routes(cid, containers, vehicles, drivers, depots, facilities)
 
@@ -182,7 +175,7 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
         m = next((f for f in facilities if wt in f["accepted_waste_types"]), facilities[0])
         facility_for[wt] = (m["lat"], m["lng"])
     trucks = [{"id": v["id"], "capacity_kg": v["capacity_kg"],
-               "allowed_waste_types": v["allowed_waste_types"]} for v in vehicles[:6]]
+               "allowed_waste_types": v["allowed_waste_types"]} for v in vehicles[:4]]
     stops = [{"id": c["id"], "lat": c["lat"], "lng": c["lng"],
               "waste_type": c["waste_type"], "load_kg": c["capacity_kg"] * 0.7,
               "priority": c.get("priority", False), "address": c["address"]}
@@ -196,9 +189,8 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
         drv = drivers[i] if i < len(drivers) else None
         end_fac = next((f for f in facilities
                         if p["waste_type"] in f["accepted_waste_types"]), facilities[0])
-        # first 3 routes in progress, rest scheduled
-        in_progress = i < 3
-        route = {"id": rid, "company_id": cid, "code": f"R-{101 + i:03d}",
+        in_progress = i < 2
+        route = {"id": rid, "company_id": cid, "code": f"R-QA{101 + i:03d}",
                  "date": TODAY, "zone_id": None,
                  "driver_id": drv["id"] if drv else None,
                  "driver_name": drv["name"] if drv else None,
@@ -211,7 +203,7 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
                  "actual_distance_km": None, "actual_duration_min": None,
                  "status": "in_progress" if in_progress else "scheduled",
                  "started_at": iso(NOW - timedelta(hours=2)) if in_progress else None,
-                 "created_at": iso(NOW), "demo": True}
+                 "created_at": iso(NOW), "test_fixture": True}
         await db.routes.insert_one(route)
 
         n = len(p["stops"])
@@ -242,7 +234,7 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
                 "scheduled_date": TODAY, "load_kg": load,
                 "arrived_at": None, "completed_at": completed_at,
                 "gps": None, "photo_url": None, "notes": "",
-                "fail_reason": fail_reason, "demo": True})
+                "fail_reason": fail_reason, "test_fixture": True})
             if status == "failed":
                 await db.incidents.insert_one({
                     "id": str(uuid.uuid4()), "company_id": cid,
@@ -253,9 +245,8 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
                     "lat": s["lat"], "lng": s["lng"], "photo_url": None,
                     "status": "open", "assigned_to": None,
                     "created_at": completed_at or iso(NOW), "resolved_at": None,
-                    "demo": True})
+                    "test_fixture": True})
 
-        # vehicle / driver state
         vstatus = "en_route" if in_progress else "assigned"
         await db.vehicles.update_one({"id": p["truck_id"]},
                                      {"$set": {"status": vstatus,
@@ -264,7 +255,6 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
             await db.drivers.update_one({"id": drv["id"]},
                                         {"$set": {"status": "assigned",
                                                   "vehicle_id": p["truck_id"]}})
-        # seed a GPS position near the depot / first stop
         first = p["stops"][0]
         start_pt = depot if in_progress else (first["lat"], first["lng"])
         await db.gps_positions.insert_one({
@@ -273,70 +263,51 @@ async def _build_routes(cid, containers, vehicles, drivers, depots, facilities):
             "lng": start_pt[1] + random.uniform(-0.01, 0.01),
             "speed": random.uniform(15, 40) if in_progress else 0,
             "heading": random.uniform(0, 360),
-            "status": vstatus, "timestamp": iso(NOW), "demo": True})
+            "status": vstatus, "timestamp": iso(NOW), "test_fixture": True})
 
-    # a few standalone incidents
-    for _ in range(4):
+    for _ in range(3):
         la, ln = rand_coord()
         await db.incidents.insert_one({
             "id": str(uuid.uuid4()), "company_id": cid,
             "kind": random.choice(["container_damaged", "container_full", "vehicle_breakdown"]),
             "priority": random.choice(["low", "medium", "high"]),
-            "description": "Ocorrência reportada pela operação.",
+            "description": "Ocorrência de teste (fixture QA).",
             "container_id": random.choice(containers)["id"], "customer_id": None,
             "route_id": None, "driver_id": None, "lat": la, "lng": ln,
             "photo_url": None, "status": random.choice(["open", "assigned", "in_progress"]),
             "assigned_to": None, "created_at": iso(NOW - timedelta(hours=random.randint(1, 20))),
-            "resolved_at": None, "demo": True})
-
-    # notifications
-    for title, body, kind in [
-        ("Recolha falhada", "Contentor não recolhido na Rota R-101", "failed_collection"),
-        ("Camião atrasado", "A viatura da Rota R-102 está atrasada", "delay"),
-        ("Alerta de capacidade", "Viatura da Rota R-103 a 85% da capacidade", "capacity"),
-    ]:
-        await db.notifications.insert_one({
-            "id": str(uuid.uuid4()), "company_id": cid, "kind": kind,
-            "title": title, "body": body, "target_user_id": None, "read": False,
-            "created_at": iso(NOW - timedelta(minutes=random.randint(5, 120))), "demo": True})
+            "resolved_at": None, "test_fixture": True})
 
 
 async def main(force=False):
-    existing = await db.companies.count_documents({"demo": True})
+    existing = await db.companies.find_one({"slug": MAIN_SLUG, "test_fixture": True})
     if existing and not force:
-        print("Já existem dados demo. Use --force para recriar.")
+        print("Dados de teste (fixture QA) já existem. Use --force para recriar.")
         return
     await _wipe()
 
-    fcc_id, fcc_drivers, fcc_customers, _ = await seed_company("FCC Ambiente", "fcc", is_main=True)
-    suma_id, _, _, _ = await seed_company("SUMA", "suma", is_main=False)
-    await seed_company("Resíduos Norte", "norte", is_main=False)
+    main_id, main_drivers, main_customers, _ = await seed_company("WasteFlow QA Co", MAIN_SLUG, is_main=True)
+    secondary_id, _, _, _ = await seed_company("WasteFlow QA Co B", SECONDARY_SLUG, is_main=False)
 
     users = [
-        ("super@wasteflow.pt", "Super Administrador", "super_admin", None, None, None),
-        ("admin@wasteflow.pt", "Administrador FCC", "company_admin", fcc_id, None, None),
-        ("despachante@wasteflow.pt", "Despachante FCC", "dispatcher", fcc_id, None, None),
-        ("motorista@wasteflow.pt", fcc_drivers[0]["name"], "driver", fcc_id, fcc_drivers[0]["id"], None),
-        ("gestor@wasteflow.pt", "Gestor de Operações", "operations_manager", fcc_id, None, None),
-        ("manutencao@wasteflow.pt", "Gestor de Manutenção", "maintenance_manager", fcc_id, None, None),
-        ("cliente@wasteflow.pt", fcc_customers[0]["name"], "customer", fcc_id, None, fcc_customers[0]["id"]),
-        ("admin@suma.pt", "Administrador SUMA", "company_admin", suma_id, None, None),
+        ("qa-admin@wasteflow-test.internal", "QA Administrador", "company_admin", main_id, None, None),
+        ("qa-dispatcher@wasteflow-test.internal", "QA Despachante", "dispatcher", main_id, None, None),
+        ("qa-driver@wasteflow-test.internal", main_drivers[0]["name"], "driver", main_id, main_drivers[0]["id"], None),
+        ("qa-manager@wasteflow-test.internal", "QA Gestor de Operações", "operations_manager", main_id, None, None),
+        ("qa-customer@wasteflow-test.internal", main_customers[0]["name"], "customer", main_id, None, main_customers[0]["id"]),
+        ("qa-admin-b@wasteflow-test.internal", "QA Administrador B", "company_admin", secondary_id, None, None),
     ]
     for email, name, role, comp, drv, cust in users:
         await db.users.insert_one({
             "id": str(uuid.uuid4()), "email": email, "name": name, "role": role,
             "company_id": comp, "driver_id": drv, "customer_id": cust,
-            "password_hash": PW, "disabled": False, "created_at": iso(NOW), "demo": True})
-    # link driver record to the driver user
-    await db.drivers.update_one({"id": fcc_drivers[0]["id"]},
-                                {"$set": {"user_email": "motorista@wasteflow.pt"}})
+            "password_hash": PW, "disabled": False, "created_at": iso(NOW), "test_fixture": True})
 
-    print("Seed concluído (dados marcados como demo — ver cleanup_demo_data.py).")
-    print(f"  Empresas: {await db.companies.count_documents({'demo': True})}")
-    print(f"  Utilizadores: {await db.users.count_documents({'demo': True})}")
-    print(f"  Contentores: {await db.containers.count_documents({'demo': True})}")
-    print(f"  Rotas: {await db.routes.count_documents({'demo': True})}")
-    print(f"  Tarefas: {await db.collection_tasks.count_documents({'demo': True})}")
+    print("Fixture QA concluída (dados marcados como test_fixture — nunca apagados por cleanup_demo_data.py).")
+    print(f"  Empresas: {await db.companies.count_documents({'test_fixture': True})}")
+    print(f"  Utilizadores: {await db.users.count_documents({'test_fixture': True})}")
+    print(f"  Contentores: {await db.containers.count_documents({'test_fixture': True})}")
+    print(f"  Rotas: {await db.routes.count_documents({'test_fixture': True})}")
 
 
 if __name__ == "__main__":

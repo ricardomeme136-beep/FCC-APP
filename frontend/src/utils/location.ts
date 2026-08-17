@@ -47,3 +47,45 @@ export async function getCurrentLocation(): Promise<{ lat: number; lng: number }
     throw new LocationError("Não foi possível obter a localização. Verifique se o GPS está ativo.", "unavailable");
   }
 }
+
+export type PositionUpdate = {
+  lat: number; lng: number;
+  heading: number | null; speed: number | null; accuracy: number | null;
+};
+
+// Continuous tracking for the in-app navigation screen — distinct from
+// getCurrentLocation() (a one-shot high-accuracy fix used only to confirm a
+// collection). Balanced accuracy + a distance/time floor keeps battery and
+// data use reasonable while a route is actively being driven. Callers MUST
+// call .remove() when navigation ends (e.g. on screen unmount).
+export async function watchPosition(
+  onUpdate: (pos: PositionUpdate) => void,
+  onError: (err: LocationError) => void
+): Promise<{ remove: () => void }> {
+  let status: Location.PermissionStatus;
+  try {
+    ({ status } = await Location.requestForegroundPermissionsAsync());
+  } catch {
+    onError(new LocationError("Não foi possível pedir permissão de localização.", "unavailable"));
+    return { remove: () => {} };
+  }
+  if (status !== "granted") {
+    onError(new LocationError("Permissão de localização negada. Ative o GPS para navegar.", "permission_denied"));
+    return { remove: () => {} };
+  }
+  try {
+    return await Location.watchPositionAsync(
+      { accuracy: Location.Accuracy.Balanced, distanceInterval: 15, timeInterval: 5000 },
+      (pos) => {
+        onUpdate({
+          lat: pos.coords.latitude, lng: pos.coords.longitude,
+          heading: pos.coords.heading ?? null, speed: pos.coords.speed ?? null,
+          accuracy: pos.coords.accuracy ?? null,
+        });
+      }
+    );
+  } catch {
+    onError(new LocationError("Não foi possível iniciar o rastreio de localização.", "unavailable"));
+    return { remove: () => {} };
+  }
+}

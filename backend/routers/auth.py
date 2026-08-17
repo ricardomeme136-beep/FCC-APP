@@ -10,13 +10,16 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/login")
 async def login(body: LoginIn):
-    user = await db.users.find_one({"email": body.email.lower()})
+    ident = body.identifier.strip().lower()
+    user = await db.users.find_one({"$or": [{"email": ident}, {"username": ident}]})
     valid = user and verify_password(body.password, user["password_hash"])
     if not valid:
         # constant-ish time on missing user
         if not user:
             verify_password(body.password, "$2b$12$C6UzMDM.H6dfI/f/IKcEe.")
-        raise HTTPException(status_code=401, detail="Email ou palavra-passe incorretos")
+        raise HTTPException(status_code=401, detail="Credenciais incorretas")
+    if user.get("disabled"):
+        raise HTTPException(status_code=401, detail="Esta conta está desativada. Contacte o administrador.")
     token = issue_token(user)
     company = None
     if user.get("company_id"):
@@ -26,7 +29,8 @@ async def login(body: LoginIn):
         "token_type": "bearer",
         "user": {
             "id": user["id"],
-            "email": user["email"],
+            "email": user.get("email"),
+            "username": user.get("username"),
             "name": user.get("name"),
             "role": user["role"],
             "company_id": user.get("company_id"),

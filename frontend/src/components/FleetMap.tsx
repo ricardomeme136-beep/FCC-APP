@@ -5,13 +5,13 @@ import { colors, radius } from "@/src/theme";
 import { getLeafletHtml, FleetMapProps } from "@/src/components/leafletHtml";
 
 // Native: real OpenStreetMap/Carto map inside a WebView (no API key needed).
-export default function FleetMap({ markers, polylines, onPressMarker, center, style }: FleetMapProps) {
+export default function FleetMap({ markers, polylines, onPressMarker, onDragMarker, onMapPress, followMarkerId, center, style }: FleetMapProps) {
   const ref = useRef<WebView>(null);
   const c = center || (markers[0] ? { lat: markers[0].lat, lng: markers[0].lng } : { lat: 38.7223, lng: -9.1393 });
   const html = useMemo(() => getLeafletHtml(c.lat, c.lng), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const deliver = () => {
-    const payload = JSON.stringify({ markers, polylines: polylines || [] });
+    const payload = JSON.stringify({ markers, polylines: polylines || [], mapPressEnabled: !!onMapPress, followMarkerId });
     ref.current?.injectJavaScript(`window.__deliver && window.__deliver(${payload}); true;`);
   };
 
@@ -35,6 +35,8 @@ export default function FleetMap({ markers, polylines, onPressMarker, center, st
             const d = JSON.parse(e.nativeEvent.data);
             if (d.__wf && d.type === "ready") deliver();
             if (d.__wf && d.type === "marker" && onPressMarker) onPressMarker(d.id);
+            if (d.__wf && d.type === "drag" && onDragMarker) onDragMarker(d.id, d.lat, d.lng);
+            if (d.__wf && d.type === "mapclick" && onMapPress) onMapPress(d.lat, d.lng);
           } catch {}
         }}
       />

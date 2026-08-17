@@ -17,7 +17,7 @@ export default function DriverPerfil() {
         </View>
         <Card style={{ gap: spacing.sm }}>
           <Txt variant="label">CONTA</Txt>
-          <Row k="Email" v={user?.email || "—"} />
+          <Row k={user?.email ? "Email" : "Nº de login"} v={user?.email || user?.username || "—"} />
           <Row k="Perfil" v="Motorista" />
         </Card>
         <Btn testID="driver-logout" title="TERMINAR SESSÃO" variant="dark" icon="log-out-outline" onPress={logout} />

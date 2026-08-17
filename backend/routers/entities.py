@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from pymongo.errors import DuplicateKeyError
+
 from core.db import db, NO_ID
 from core.models import (VehicleIn, DriverIn, ContainerIn, ContainerUpdate,
-                         DepotIn, FacilityIn, CustomerIn)
+                         DepotIn, FacilityIn, CustomerIn, PasswordResetIn)
 from core.security import (current_user, require_roles, tenant_query, write_audit,
-                           MANAGEMENT_ROLES)
+                           hash_password, MANAGEMENT_ROLES)
 
 router = APIRouter(tags=["entities"])
 
@@ -113,23 +115,119 @@ async def get_driver(did: str, user: dict = Depends(current_user)):
 @router.post("/drivers")
 async def create_driver(body: DriverIn, request: Request,
                         user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Creates the driver record. If `password` is given together with
+    `email` and/or `employee_number`, also creates the linked login account
+    in the same call (Fase PROD1) — the driver never needs a second,
+    separate step to be able to log in. The login identifier doesn't have
+    to be an email: a driver can log in with their employee number instead
+    (or both, whichever they type). Omitted, behaves exactly as before
+    (driver-only, no account)."""
+    driver_fields = body.dict(exclude={"password"})
     doc = {"id": str(uuid.uuid4()), "company_id": user["company_id"],
-           "created_at": now_iso(), **body.dict()}
+           "created_at": now_iso(), **driver_fields}
     await db.drivers.insert_one(doc)
-    await write_audit(user, "create", "driver", doc["id"], request, new=body.dict())
+
+    user_created = False
+    if body.password:
+        if not body.email and not body.employee_number:
+            await db.drivers.delete_one({"id": doc["id"]})
+            raise HTTPException(400, "Indique um email ou um número de motorista para criar o acesso")
+        user_doc = {
+            "id": str(uuid.uuid4()), "name": body.name,
+            "role": "driver", "company_id": user["company_id"],
+            "driver_id": doc["id"], "customer_id": None,
+            "password_hash": hash_password(body.password), "disabled": False,
+            "created_at": now_iso(),
+        }
+        if body.email:
+            user_doc["email"] = body.email.lower()
+        if body.employee_number:
+            user_doc["username"] = body.employee_number.strip().lower()
+        try:
+            await db.users.insert_one(user_doc)
+            user_created = True
+        except DuplicateKeyError:
+            await db.drivers.delete_one({"id": doc["id"]})  # no orphan driver left behind
+            raise HTTPException(400, "Já existe uma conta com este email ou número de motorista")
+
+    await write_audit(user, "create", "driver", doc["id"], request, new=driver_fields)
     doc.pop("_id", None)
+    doc["user_created"] = user_created
     return doc
 
 
 @router.patch("/drivers/{did}")
 async def update_driver(did: str, body: DriverIn, request: Request,
                         user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    # `password` is write-only on creation — never persisted here; use
+    # POST /drivers/{did}/reset-password to change a driver's login password.
+    changes = body.dict(exclude={"password"})
     r = await db.drivers.update_one(
-        tenant_query(user, {"id": did}), {"$set": body.dict()})
+        tenant_query(user, {"id": did}), {"$set": changes})
     if not r.matched_count:
         raise HTTPException(404, "Motorista não encontrado")
-    await write_audit(user, "update", "driver", did, request, new=body.dict())
+
+    # Keep the linked account's login number in sync — but only if the
+    # driver already logs in with one; changing employee_number never
+    # silently grants number-login to a driver who only had email before.
+    if body.employee_number:
+        linked = await db.users.find_one(tenant_query(user, {"driver_id": did}), NO_ID)
+        new_username = body.employee_number.strip().lower()
+        if linked and linked.get("username") and linked["username"] != new_username:
+            try:
+                await db.users.update_one(tenant_query(user, {"id": linked["id"]}),
+                                          {"$set": {"username": new_username}})
+            except DuplicateKeyError:
+                raise HTTPException(400, "Já existe uma conta com este número de motorista")
+
+    await write_audit(user, "update", "driver", did, request, new=changes)
     return await db.drivers.find_one(tenant_query(user, {"id": did}), NO_ID)
+
+
+@router.post("/drivers/{did}/disable")
+async def disable_driver(did: str, request: Request,
+                         user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Blocks login and marks the driver unavailable — never deletes routes,
+    tasks, incidents or GPS history tied to them."""
+    d = await db.drivers.find_one(tenant_query(user, {"id": did}), NO_ID)
+    if not d:
+        raise HTTPException(404, "Motorista não encontrado")
+    await db.drivers.update_one(tenant_query(user, {"id": did}),
+                                {"$set": {"employment_status": "inativo"}})
+    linked = await db.users.find_one(tenant_query(user, {"driver_id": did}), NO_ID)
+    if linked:
+        await db.users.update_one(tenant_query(user, {"id": linked["id"]}),
+                                  {"$set": {"disabled": True}})
+    await write_audit(user, "disable", "driver", did, request)
+    return {"ok": True}
+
+
+@router.post("/drivers/{did}/enable")
+async def enable_driver(did: str, request: Request,
+                        user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    d = await db.drivers.find_one(tenant_query(user, {"id": did}), NO_ID)
+    if not d:
+        raise HTTPException(404, "Motorista não encontrado")
+    await db.drivers.update_one(tenant_query(user, {"id": did}),
+                                {"$set": {"employment_status": "ativo"}})
+    linked = await db.users.find_one(tenant_query(user, {"driver_id": did}), NO_ID)
+    if linked:
+        await db.users.update_one(tenant_query(user, {"id": linked["id"]}),
+                                  {"$set": {"disabled": False}})
+    await write_audit(user, "enable", "driver", did, request)
+    return {"ok": True}
+
+
+@router.post("/drivers/{did}/reset-password")
+async def reset_driver_password(did: str, body: PasswordResetIn, request: Request,
+                                user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    linked = await db.users.find_one(tenant_query(user, {"driver_id": did}), NO_ID)
+    if not linked:
+        raise HTTPException(404, "Este motorista não tem conta de acesso associada")
+    await db.users.update_one(tenant_query(user, {"id": linked["id"]}),
+                              {"$set": {"password_hash": hash_password(body.new_password)}})
+    await write_audit(user, "reset_password", "driver", did, request)
+    return {"ok": True}
 
 
 # ---------------- Containers ----------------

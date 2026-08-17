@@ -12,7 +12,8 @@ const MANAGEMENT_ROLES = [
 
 export type User = {
   id: string;
-  email: string;
+  email?: string | null;
+  username?: string | null;
   name: string;
   role: string;
   company_id: string | null;
@@ -24,7 +25,7 @@ export type User = {
 type AuthState = {
   user: User | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -56,9 +57,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (identifier: string, password: string) => {
     const res = await api.post<{ access_token: string; user: User }>("/auth/login", {
-      email: email.trim().toLowerCase(),
+      identifier: identifier.trim().toLowerCase(),
       password,
     });
     await storage.secureSet(TOKEN_KEY, res.access_token);

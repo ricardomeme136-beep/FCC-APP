@@ -11,7 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from core.db import db, ensure_indexes, NO_ID
 from core.security import current_user
 from services.geo import haversine, bearing, move_towards
-from routers import auth, entities, routes as routes_router, tasks, gps, incidents, analytics, ai
+from routers import auth, entities, routes as routes_router, tasks, gps, incidents, analytics, ai, users
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -40,6 +40,7 @@ api.include_router(gps.router)
 api.include_router(incidents.router)
 api.include_router(analytics.router)
 api.include_router(ai.router)
+api.include_router(users.router)
 
 app.include_router(api)
 

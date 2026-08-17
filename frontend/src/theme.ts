@@ -45,7 +45,7 @@ export const spacing = {
   "3xl": 48,
 };
 
-export const radius = { xs: 8, sm: 12, md: 14, lg: 18, xl: 24, pill: 999 };
+export const radius = { xs: 8, sm: 12, md: 16, lg: 20, xl: 28, pill: 999 };
 
 export const fonts = {
   display: "SpaceGrotesk-Bold",
@@ -60,14 +60,21 @@ export const border = { width: 1, color: colors.border };
 
 export const shadows: Record<string, ViewStyle> = {
   sm: Platform.select({
-    ios: { shadowColor: "#0F172A", shadowOpacity: 0.06, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+    ios: { shadowColor: "#0F172A", shadowOpacity: 0.05, shadowRadius: 8, shadowOffset: { width: 0, height: 2 } },
     android: { elevation: 1 },
-    default: {},
+    default: { boxShadow: "0 2px 8px rgba(15,23,42,0.05)" } as any,
   }) as ViewStyle,
   card: Platform.select({
-    ios: { shadowColor: "#0F172A", shadowOpacity: 0.08, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } },
+    ios: { shadowColor: "#0F172A", shadowOpacity: 0.07, shadowRadius: 20, shadowOffset: { width: 0, height: 8 } },
     android: { elevation: 3 },
-    default: { boxShadow: "0 6px 18px rgba(15,23,42,0.08)" } as any,
+    default: { boxShadow: "0 8px 24px rgba(15,23,42,0.07), 0 2px 6px rgba(15,23,42,0.04)" } as any,
+  }) as ViewStyle,
+  // A touch stronger — floating panels, sheets, anything that should read as
+  // sitting clearly above the page (modals, the map editor's side panel).
+  float: Platform.select({
+    ios: { shadowColor: "#0F172A", shadowOpacity: 0.12, shadowRadius: 28, shadowOffset: { width: 0, height: 12 } },
+    android: { elevation: 6 },
+    default: { boxShadow: "0 16px 40px rgba(15,23,42,0.12), 0 4px 10px rgba(15,23,42,0.06)" } as any,
   }) as ViewStyle,
 };
 

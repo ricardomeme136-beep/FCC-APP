@@ -12,11 +12,21 @@ if not BASE_URL:
                 break
 
 API = f"{BASE_URL}/api"
-PASSWORD = "WasteFlow2026!"
+PASSWORD = "WasteFlowTest2026!"
+
+# Fixed QA-fixture accounts created by seed_test_fixtures.py — a permanent,
+# test-suite-owned dataset (tag "test_fixture", never "demo") that survives
+# cleanup_demo_data.py and is never confused with a real company's data.
+ADMIN_EMAIL = "qa-admin@wasteflow-test.internal"
+ADMIN_B_EMAIL = "qa-admin-b@wasteflow-test.internal"
+DISPATCHER_EMAIL = "qa-dispatcher@wasteflow-test.internal"
+DRIVER_EMAIL = "qa-driver@wasteflow-test.internal"
+MANAGER_EMAIL = "qa-manager@wasteflow-test.internal"
+CUSTOMER_EMAIL = "qa-customer@wasteflow-test.internal"
 
 
-def _login(email, password=PASSWORD):
-    r = requests.post(f"{API}/auth/login", json={"email": email, "password": password}, timeout=30)
+def _login(identifier, password=PASSWORD):
+    r = requests.post(f"{API}/auth/login", json={"identifier": identifier, "password": password}, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -28,27 +38,27 @@ def api_base():
 
 @pytest.fixture(scope="session")
 def admin_fcc():
-    return _login("admin@wasteflow.pt")
+    return _login(ADMIN_EMAIL)
 
 
 @pytest.fixture(scope="session")
 def admin_suma():
-    return _login("admin@suma.pt")
+    return _login(ADMIN_B_EMAIL)
 
 
 @pytest.fixture(scope="session")
 def driver_fcc():
-    return _login("motorista@wasteflow.pt")
+    return _login(DRIVER_EMAIL)
 
 
 @pytest.fixture(scope="session")
 def customer_fcc():
-    return _login("cliente@wasteflow.pt")
+    return _login(CUSTOMER_EMAIL)
 
 
 @pytest.fixture(scope="session")
 def dispatcher_fcc():
-    return _login("despachante@wasteflow.pt")
+    return _login(DISPATCHER_EMAIL)
 
 
 def auth_headers(session_login):

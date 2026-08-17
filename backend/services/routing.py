@@ -67,6 +67,7 @@ async def road_route(stops: List[Tuple[float, float]]) -> Dict:
         "coordinates": [[s[1], s[0]] for s in stops],  # ORS = [lng, lat]
         "instructions": True,
         "instructions_format": "text",
+        "language": "pt",  # the app is PT-PT throughout — steps must match
         "geometry": True,
         "units": "m",
     }

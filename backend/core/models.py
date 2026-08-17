@@ -4,7 +4,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 
 class LoginIn(BaseModel):
-    email: EmailStr
+    identifier: str  # email OR username (e.g. a driver's employee number)
     password: str
 
 
@@ -25,7 +25,14 @@ class DriverIn(BaseModel):
     license_number: str = ""
     license_type: str = ""
     vehicle_id: Optional[str] = None
-    status: str = "available"
+    status: str = "available"  # OPERATIONAL state (available/assigned/...) — used by the optimizer. Do not confuse with employment_status below.
+    # --- Real onboarding (Fase PROD1) — all optional ---
+    employee_number: str = ""
+    email: Optional[EmailStr] = None   # display/edit copy only — the login-authoritative email lives on the linked `users` document
+    password: Optional[str] = None     # write-only: if set together with email, POST /drivers also creates the linked login account
+    license_expiry: Optional[str] = None
+    notes: str = ""
+    employment_status: str = "ativo"   # ativo|inativo|ferias|baixa|indisponivel — availability/vínculo, separate from `status` above
 
 
 class ContainerIn(BaseModel):
@@ -129,6 +136,107 @@ class OptimizeIn(BaseModel):
     num_trucks: int = 4
     zones: List[str] = []
     waste_types: List[str] = []
+    # Explicit admin selections (Fase B) — all optional; omitted, behaviour is
+    # identical to today's auto-selection.
+    container_ids: Optional[List[str]] = None
+    vehicle_ids: Optional[List[str]] = None
+    driver_ids: Optional[List[str]] = None
+    depot_id: Optional[str] = None
+    facility_id: Optional[str] = None
+
+
+class StopReorderIn(BaseModel):
+    stop_ids: List[str]
+
+
+class StopMoveIn(BaseModel):
+    target_route_id: str
+
+
+class StopCreateIn(BaseModel):
+    container_ids: List[str]
+
+
+# ---- Visual map route builder (Fase B2.1) ----
+
+class LatLng(BaseModel):
+    lat: float
+    lng: float
+
+
+class PreviewGeometryIn(BaseModel):
+    points: List[LatLng]
+
+
+class PreviewOptimizeStop(BaseModel):
+    id: str
+    lat: float
+    lng: float
+
+
+class PreviewOptimizeIn(BaseModel):
+    start: LatLng
+    end: LatLng
+    stops: List[PreviewOptimizeStop]
+
+
+class ManualRouteEndpoint(BaseModel):
+    depot_id: Optional[str] = None
+    facility_id: Optional[str] = None
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class ManualRouteStopIn(BaseModel):
+    lat: float
+    lng: float
+    address: str = ""
+
+
+class ManualRouteIn(BaseModel):
+    date: str
+    start: ManualRouteEndpoint
+    end: ManualRouteEndpoint = ManualRouteEndpoint()
+    stops: List[ManualRouteStopIn]
+    vehicle_id: Optional[str] = None
+    driver_id: Optional[str] = None
+    mode: str = "manual"
+
+
+# ---- Real user/driver management (Fase PROD1) ----
+
+class UserCreateIn(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str
+    driver_id: Optional[str] = None
+    customer_id: Optional[str] = None
+
+
+class UserUpdateIn(BaseModel):
+    name: Optional[str] = None
+    role: Optional[str] = None
+    disabled: Optional[bool] = None
+
+
+class PasswordResetIn(BaseModel):
+    new_password: str
+
+
+class RouteAssignmentIn(BaseModel):
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+
+
+class RouteStartIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class RouteFinishIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
 
 
 class AiQuery(BaseModel):
