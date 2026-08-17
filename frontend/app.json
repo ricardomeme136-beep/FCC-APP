@@ -35,6 +35,12 @@
           "resizeMode": "contain",
           "backgroundColor": "#000000"
         }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "O WasteFlow precisa da sua localização para confirmar a recolha do contentor."
+        }
       ]
     ],
     "experiments": {

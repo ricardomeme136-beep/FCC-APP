@@ -5,6 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
+import { getCurrentLocation } from "@/src/utils/location";
 import { ScreenHeader } from "@/src/components/Header";
 import { Loading, Txt, useToast } from "@/src/components/ui";
 import FleetMap from "@/src/components/FleetMap";
@@ -64,7 +65,10 @@ export default function DriverRota() {
     catch (e: any) { toast(e?.message || "Erro", "error"); } finally { setBusy(false); }
   };
 
-  const collect = () => next && act(() => api.post(`/collection-tasks/${next.id}/complete`, {}), "Recolha registada");
+  const collect = () => next && act(async () => {
+    const { lat, lng } = await getCurrentLocation();
+    return api.post(`/collection-tasks/${next.id}/complete`, { lat, lng });
+  }, "Recolha registada");
   const ignore = () => next && act(() => api.post(`/collection-tasks/${next.id}/ignore`), "Recolha ignorada");
   const fail = (reason: string) => {
     setFailOpen(false);
