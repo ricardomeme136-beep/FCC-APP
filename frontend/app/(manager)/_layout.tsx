@@ -42,6 +42,7 @@ export default function ManagerLayout() {
       <Tabs.Screen name="painel" options={{ title: "PAINEL", tabBarIcon: ({ color, size }) => <Ionicons name="grid" size={size - 2} color={color} /> }} />
       <Tabs.Screen name="mapa" options={{ title: "MAPA", tabBarIcon: ({ color, size }) => <Ionicons name="map" size={size - 2} color={color} /> }} />
       <Tabs.Screen name="rotas" options={{ title: "ROTAS", tabBarIcon: ({ color, size }) => <Ionicons name="navigate" size={size - 2} color={color} /> }} />
+      <Tabs.Screen name="execucoes" options={{ title: "EXECUÇÕES", tabBarIcon: ({ color, size }) => <Ionicons name="git-network" size={size - 2} color={color} /> }} />
       <Tabs.Screen name="contentores" options={{ title: "CONTENTORES", tabBarIcon: ({ color, size }) => <Ionicons name="cube" size={size - 2} color={color} /> }} />
       <Tabs.Screen name="mais" options={{ title: "MAIS", tabBarIcon: ({ color, size }) => <Ionicons name="menu" size={size - 2} color={color} /> }} />
     </Tabs>

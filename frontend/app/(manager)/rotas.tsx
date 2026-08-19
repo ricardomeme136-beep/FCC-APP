@@ -1,337 +1,188 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
 import { ScreenHeader } from "@/src/components/Header";
-import { Btn, Card, Empty, Loading, SearchInput, Txt, useToast } from "@/src/components/ui";
-import ContainerPicker from "@/src/components/ContainerPicker";
-import { colors, spacing, border, radius, routeStatus, wasteLabels, vehicleStatus } from "@/src/theme";
+import { ActionMenu, Badge, Btn, Empty, Loading, SearchInput, Txt, useToast } from "@/src/components/ui";
+import { agoLabel } from "@/src/utils/time";
+import { colors, spacing, border, radius } from "@/src/theme";
 
-type Vehicle = { id: string; plate: string; capacity_kg: number; allowed_waste_types: string[]; status: string };
-type Driver = { id: string; name: string; status: string };
-type Place = { id: string; name: string; is_primary?: boolean };
+type Filter = "active" | "archived" | "all";
+const FILTERS: { key: Filter; label: string }[] = [
+  { key: "active", label: "ATIVAS" },
+  { key: "archived", label: "ARQUIVADAS" },
+  { key: "all", label: "TODAS" },
+];
 
-function nextDays(n: number) {
-  const out: { date: string; label: string }[] = [];
-  const base = new Date();
-  for (let i = 0; i < n; i++) {
-    const d = new Date(base);
-    d.setDate(base.getDate() + i);
-    const iso = d.toISOString().slice(0, 10);
-    const label = i === 0 ? "HOJE" : i === 1 ? "AMANHÃ" : d.toLocaleDateString("pt-PT", { weekday: "short", day: "2-digit", month: "2-digit" }).toUpperCase();
-    out.push({ date: iso, label });
-  }
-  return out;
-}
-const DATE_OPTIONS = nextDays(14);
-
-export default function Rotas() {
+export default function RouteTemplates() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const toast = useToast();
-  const [routes, setRoutes] = useState<any[] | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [templates, setTemplates] = useState<any[] | null>(null);
   const [search, setSearch] = useState("");
-
-  const [date, setDate] = useState(DATE_OPTIONS[0].date);
-  const [containerIds, setContainerIds] = useState<string[]>([]);
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>([]);
-  const [depots, setDepots] = useState<Place[]>([]);
-  const [facilities, setFacilities] = useState<Place[]>([]);
-  const [vehicleIds, setVehicleIds] = useState<string[]>([]);
-  const [driverIds, setDriverIds] = useState<string[]>([]);
-  const [depotId, setDepotId] = useState<string | null>(null);
-  const [facilityId, setFacilityId] = useState<string | null>(null);
-  const [numTrucks, setNumTrucks] = useState(4);
-  const [optimizing, setOptimizing] = useState(false);
-
-  const [preview, setPreview] = useState<{ routes: any[]; skipped: string[] } | null>(null);
+  const [filter, setFilter] = useState<Filter>("active");
+  const [menuFor, setMenuFor] = useState<any | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const r = await api.get<any[]>("/routes");
-    setRoutes(r);
+    const t = await api.get<any[]>("/route-templates");
+    setTemplates(t);
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
-  useEffect(() => {
-    (async () => {
-      const [v, d, dep, fac] = await Promise.all([
-        api.get<Vehicle[]>("/vehicles"),
-        api.get<Driver[]>("/drivers"),
-        api.get<Place[]>("/depots"),
-        api.get<Place[]>("/facilities"),
-      ]);
-      setVehicles(v.filter((x) => x.status === "available" || x.status === "assigned"));
-      setDrivers(d.filter((x: any) => x.status === "available" || x.status === "assigned"));
-      setDepots(dep);
-      setFacilities(fac);
-      // Show the primary depot pre-selected instead of leaving it on the
-      // implicit "AUTOMÁTICO" default — the admin sees exactly which depot
-      // will be used before generating anything.
-      const primary = dep.find((d2) => d2.is_primary);
-      if (primary) setDepotId(primary.id);
-    })();
-  }, []);
+  const visible = useMemo(() => {
+    if (!templates) return [];
+    return templates
+      .filter((t) => filter === "all" || (filter === "active" ? t.active : !t.active))
+      .filter((t) => !search || t.name?.toLowerCase().includes(search.toLowerCase()));
+  }, [templates, filter, search]);
 
-  const generate = async () => {
-    if (containerIds.length === 0) {
-      toast("Selecione pelo menos um contentor", "error");
-      return;
-    }
-    setOptimizing(true);
+  const createTemplate = async () => {
+    if (!newName.trim()) { toast("Indique um nome", "error"); return; }
     setCreating(true);
     try {
-      const body: any = { date, container_ids: containerIds };
-      if (vehicleIds.length) body.vehicle_ids = vehicleIds;
-      else body.num_trucks = numTrucks;
-      if (driverIds.length) body.driver_ids = driverIds;
-      if (depotId) body.depot_id = depotId;
-      if (facilityId) body.facility_id = facilityId;
-
-      const res = await api.post<{ routes: any[]; count: number; skipped_duplicate: string[] }>("/routes/optimize", body);
-      setPreview({ routes: res.routes, skipped: res.skipped_duplicate || [] });
-      toast(`${res.count} rota(s) gerada(s)`, "success");
-      await load();
+      const t = await api.post<any>("/route-templates", { name: newName.trim(), description: newDesc, stops: [] });
+      setCreateOpen(false);
+      setNewName("");
+      setNewDesc("");
+      router.push(`/template/${t.id}` as any);
     } catch (e: any) {
-      toast(e?.message || "Falha na otimização", "error");
+      toast(e?.message || "Erro ao criar rota", "error");
     } finally {
-      setOptimizing(false);
+      setCreating(false);
     }
   };
 
-  const discardPreviewRoute = async (rid: string) => {
+  const duplicate = async (t: any) => {
+    setMenuFor(null);
+    setBusy(true);
     try {
-      await api.del(`/routes/${rid}`);
-      setPreview((p) => (p ? { ...p, routes: p.routes.filter((r) => r.id !== rid) } : p));
-      toast("Rota descartada", "success");
+      const dup = await api.post<any>(`/route-templates/${t.id}/duplicate`, {});
+      toast("Rota duplicada", "success");
+      await load();
+      router.push(`/template/${dup.id}` as any);
+    } catch (e: any) {
+      toast(e?.message || "Erro ao duplicar", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleArchive = async (t: any) => {
+    setMenuFor(null);
+    setBusy(true);
+    try {
+      await api.patch(`/route-templates/${t.id}`, { active: !t.active });
+      toast(t.active ? "Rota arquivada" : "Rota reativada", "success");
       await load();
     } catch (e: any) {
       toast(e?.message || "Erro", "error");
+    } finally {
+      setBusy(false);
     }
   };
 
-  const finishPreview = () => {
-    setPreview(null);
-    setCreating(false);
-    setContainerIds([]);
-    setVehicleIds([]);
-    setDriverIds([]);
-  };
-
-  const vehicleLabel = (v: Vehicle) =>
-    `${v.plate} · ${v.capacity_kg}kg${v.allowed_waste_types?.length ? " · " + v.allowed_waste_types.map((w) => wasteLabels[w] || w).join("/") : ""}`;
-
-  if (!routes) {
-    return (<View style={styles.flex}><ScreenHeader title="ROTAS" subtitle="GESTÃO DE ROTAS" /><Loading /></View>);
-  }
-
-  if (preview) {
-    return (
-      <View style={styles.flex}>
-        <ScreenHeader title="ROTAS GERADAS" subtitle="PRÉ-VISUALIZAÇÃO" />
-        <ScrollView contentContainerStyle={styles.scroll}>
-          {preview.skipped.length > 0 && (
-            <Card style={{ backgroundColor: "#FFFBEB", gap: 4 }}>
-              <Txt variant="monoBold" color={colors.warning}>{preview.skipped.length} contentor(es) ignorados</Txt>
-              <Txt variant="mono" color={colors.muted}>Já tinham recolhas agendadas para esta data.</Txt>
-            </Card>
-          )}
-          {preview.routes.length === 0 ? (
-            <Empty text="Nenhuma rota criada." icon="navigate-outline" />
-          ) : (
-            preview.routes.map((r) => {
-              const v = vehicles.find((x) => x.id === r.vehicle_id);
-              return (
-                <Card key={r.id} style={{ gap: spacing.sm }}>
-                  <View style={styles.routeHead}>
-                    <Txt variant="displaySm" color={colors.brand}>{r.code}</Txt>
-                    <Pressable testID={`discard-${r.id}`} onPress={() => discardPreviewRoute(r.id)} hitSlop={8}>
-                      <Ionicons name="trash-outline" size={20} color={colors.error} />
-                    </Pressable>
-                  </View>
-                  <Txt variant="mono" color={colors.muted}>
-                    {r.driver_name || "Sem motorista"} · {v?.plate || "—"}
-                  </Txt>
-                  <View style={styles.routeStats}>
-                    <Stat label="PARAGENS" value={r.num_stops} />
-                    <Stat label="DISTÂNCIA" value={`${r.distance_km} km`} />
-                    <Stat label="DURAÇÃO" value={`${Math.round(r.duration_min / 60)}h${Math.round(r.duration_min % 60)}`} />
-                  </View>
-                  <Pressable testID={`open-${r.id}`} onPress={() => router.push(`/route/${r.id}` as any)}>
-                    <Txt variant="monoBold" color={colors.brand}>VER DETALHE →</Txt>
-                  </Pressable>
-                </Card>
-              );
-            })
-          )}
-          <Btn testID="finish-preview" title="CONCLUIR" variant="dark" onPress={finishPreview} />
-        </ScrollView>
-      </View>
-    );
+  if (!templates) {
+    return (<View style={styles.flex}><ScreenHeader title="ROTAS" subtitle="BIBLIOTECA DE ROTAS" /><Loading /></View>);
   }
 
   return (
     <View style={styles.flex}>
-      <ScreenHeader title="ROTAS" subtitle="GESTÃO DE ROTAS" />
+      <ScreenHeader title="ROTAS" subtitle="BIBLIOTECA DE ROTAS REUTILIZÁVEIS" />
       <ScrollView contentContainerStyle={styles.scroll}>
-        {!creating ? (
-          <>
-            <View style={styles.createRow}>
-              <Btn testID="start-create-route" title="CRIAR AUTOMATICAMENTE" icon="git-network" size="sm" style={{ flex: 1 }} onPress={() => setCreating(true)} />
-              <Btn testID="start-create-route-map" title="CRIAR NO MAPA" icon="map" variant="outline" size="sm" style={{ flex: 1 }} onPress={() => router.push("/(manager)/mapa-rota" as any)} />
-            </View>
-            {routes.length > 0 && (
-              <SearchInput testID="search-routes" value={search} onChangeText={setSearch} placeholder="Pesquisar por código ou motorista..." />
-            )}
-            {routes.length === 0 ? (
-              <Empty text="Nenhuma rota criada." icon="navigate-outline" />
-            ) : (
-              routes
-                .filter((r) => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.driver_name?.toLowerCase().includes(search.toLowerCase()))
-                .map((r) => {
-                const st = routeStatus[r.status] || routeStatus.scheduled;
-                return (
-                  <Pressable key={r.id} testID={`route-${r.id}`} onPress={() => router.push(`/route/${r.id}` as any)}>
-                    <View style={styles.routeCard}>
-                      <View style={styles.routeHead}>
-                        <Txt variant="displaySm">{r.code}</Txt>
-                        <View style={[styles.stTag, { backgroundColor: st.color }]}>
-                          <Txt variant="monoBold" color="#fff" style={{ fontSize: 10 }}>{st.label}</Txt>
-                        </View>
-                      </View>
-                      <Txt variant="mono" color={colors.muted}>
-                        {r.driver_name || "Sem motorista"} · {wasteLabels[r.waste_type] || r.waste_type}
-                      </Txt>
-                      <View style={styles.routeStats}>
-                        <Stat label="RECOLHAS" value={r.num_stops} />
-                        <Stat label="DISTÂNCIA" value={`${r.distance_km} km`} />
-                        <Stat label="DURAÇÃO" value={`${Math.round(r.duration_min)} min`} />
-                        <Stat label="CAPACIDADE" value={`${r.capacity_utilization}%`} />
-                      </View>
-                    </View>
-                  </Pressable>
-                );
-              })
-            )}
-          </>
+        <View style={styles.topRow}>
+          <SearchInput testID="search-templates" value={search} onChangeText={setSearch} placeholder="Pesquisar rota..." />
+          <Btn testID="new-template-button" title="+ NOVA ROTA" icon="add" size="sm" onPress={() => setCreateOpen(true)} />
+        </View>
+
+        <View style={styles.chipRow}>
+          {FILTERS.map((f) => (
+            <Pressable key={f.key} testID={`template-filter-${f.key}`} onPress={() => setFilter(f.key)}
+              style={[styles.chip, filter === f.key ? styles.chipOn : null]}>
+              <Txt variant="monoBold" style={{ fontSize: 11 }} color={filter === f.key ? colors.onSurfaceInverse : colors.onSurface}>{f.label}</Txt>
+            </Pressable>
+          ))}
+        </View>
+
+        {visible.length === 0 ? (
+          <Empty text="Nenhuma rota reutilizável ainda." icon="git-network-outline" />
         ) : (
-          <>
-            <View style={styles.formHead}>
-              <Txt variant="label">NOVA ROTA</Txt>
-              <Pressable testID="cancel-create-route" onPress={() => setCreating(false)} hitSlop={8}>
-                <Ionicons name="close" size={22} color={colors.onSurface} />
-              </Pressable>
-            </View>
-
-            <Txt variant="label">DATA</Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              {DATE_OPTIONS.map((d) => (
-                <Pressable key={d.date} onPress={() => setDate(d.date)} style={[styles.chip, date === d.date ? styles.chipOn : null]}>
-                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={date === d.date ? colors.onSurfaceInverse : colors.onSurface}>{d.label}</Txt>
-                </Pressable>
-              ))}
-            </ScrollView>
-
-            <Txt variant="label">CONTENTORES / RECOLHAS</Txt>
-            <ContainerPicker value={containerIds} onChange={setContainerIds} forDate={date} />
-
-            <Txt variant="label">VIATURAS DISPONÍVEIS</Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              {vehicles.map((v) => {
-                const on = vehicleIds.includes(v.id);
-                const st = vehicleStatus[v.status] || vehicleStatus.offline;
-                return (
-                  <Pressable
-                    key={v.id}
-                    testID={`vehicle-chip-${v.id}`}
-                    onPress={() => setVehicleIds((s) => (on ? s.filter((x) => x !== v.id) : [...s, v.id]))}
-                    style={[styles.pickChip, on ? styles.chipOn : null]}
-                  >
-                    <Txt variant="monoBold" style={{ fontSize: 11 }} color={on ? colors.onSurfaceInverse : colors.onSurface}>
-                      {vehicleLabel(v)}
-                    </Txt>
-                    <Txt variant="label" color={on ? "#D1D5DB" : st.color}>{st.label}</Txt>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-            {vehicleIds.length === 0 && (
-              <View style={styles.stepperRow}>
-                <Txt variant="mono" color={colors.muted}>Nº de camiões (automático)</Txt>
-                <View style={styles.stepper}>
-                  <Pressable onPress={() => setNumTrucks((t) => Math.max(1, t - 1))} style={styles.stepBtn}>
-                    <Ionicons name="remove" size={18} color={colors.onSurface} />
-                  </Pressable>
-                  <Txt variant="monoBold" style={{ fontSize: 16, minWidth: 26, textAlign: "center" }}>{numTrucks}</Txt>
-                  <Pressable onPress={() => setNumTrucks((t) => Math.min(6, t + 1))} style={styles.stepBtn}>
-                    <Ionicons name="add" size={18} color={colors.onSurface} />
-                  </Pressable>
+          visible.map((t) => {
+            const stops = t.stops || [];
+            const totalContainers = stops.reduce((n: number, s: any) => n + (s.container_ids || []).length, 0);
+            return (
+              <Pressable key={t.id} testID={`template-${t.id}`} onPress={() => router.push(`/template/${t.id}` as any)} style={styles.card}>
+                <View style={styles.cardIcon}>
+                  <Ionicons name="git-network" size={18} color={colors.fccBlue} />
                 </View>
-              </View>
-            )}
-
-            <Txt variant="label">MOTORISTAS DISPONÍVEIS</Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              {drivers.map((d) => {
-                const on = driverIds.includes(d.id);
-                return (
-                  <Pressable
-                    key={d.id}
-                    testID={`driver-chip-${d.id}`}
-                    onPress={() => setDriverIds((s) => (on ? s.filter((x) => x !== d.id) : [...s, d.id]))}
-                    style={[styles.chip, on ? styles.chipOn : null]}
-                  >
-                    <Txt variant="monoBold" style={{ fontSize: 11 }} color={on ? colors.onSurfaceInverse : colors.onSurface}>{d.name}</Txt>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-            {vehicleIds.length === 0 && driverIds.length === 0 ? null : (
-              <Txt variant="label" color={colors.muted}>Sem seleção manual → atribuição automática (como hoje).</Txt>
-            )}
-
-            <Txt variant="label">DEPÓSITO DE INÍCIO</Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              <Pressable onPress={() => setDepotId(null)} style={[styles.chip, !depotId ? styles.chipOn : null]}>
-                <Txt variant="monoBold" style={{ fontSize: 11 }} color={!depotId ? colors.onSurfaceInverse : colors.onSurface}>AUTOMÁTICO</Txt>
-              </Pressable>
-              {depots.map((d) => (
-                <Pressable key={d.id} onPress={() => setDepotId(d.id)} style={[styles.chip, depotId === d.id ? styles.chipOn : null]}>
-                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={depotId === d.id ? colors.onSurfaceInverse : colors.onSurface}>
-                    {d.is_primary ? `★ ${d.name}` : d.name}
-                  </Txt>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={styles.cardHead}>
+                    <Txt variant="displaySm" numberOfLines={1} style={{ fontSize: 15, flex: 1 }}>{t.name}</Txt>
+                    <Badge label={t.active ? "ATIVA" : "ARQUIVADA"} color={t.active ? colors.success : colors.muted} />
+                  </View>
+                  {t.description ? <Txt variant="mono" color={colors.muted} numberOfLines={1} style={{ fontSize: 12 }}>{t.description}</Txt> : null}
+                  <View style={styles.statsRow}>
+                    <Stat icon="location" value={`${stops.length} paragens`} />
+                    <Stat icon="cube" value={`${totalContainers} contentores`} />
+                    <Stat icon="navigate" value={`${t.distance_km || 0} km`} />
+                    <Stat icon="time" value={`${Math.round(t.duration_min || 0)} min`} />
+                  </View>
+                  <Txt variant="label" color={colors.muted} style={{ marginTop: 2 }}>ATUALIZADA {agoLabel(t.updated_at)}</Txt>
+                </View>
+                <Pressable testID={`template-menu-${t.id}`} onPress={() => setMenuFor(t)} hitSlop={10} style={styles.menuBtn}>
+                  <Ionicons name="ellipsis-vertical" size={18} color={colors.muted} />
                 </Pressable>
-              ))}
-            </ScrollView>
-
-            <Txt variant="label">CENTRO DE TRATAMENTO / DESTINO FINAL</Txt>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-              <Pressable onPress={() => setFacilityId(null)} style={[styles.chip, !facilityId ? styles.chipOn : null]}>
-                <Txt variant="monoBold" style={{ fontSize: 11 }} color={!facilityId ? colors.onSurfaceInverse : colors.onSurface}>AUTOMÁTICO</Txt>
               </Pressable>
-              {facilities.map((f) => (
-                <Pressable key={f.id} onPress={() => setFacilityId(f.id)} style={[styles.chip, facilityId === f.id ? styles.chipOn : null]}>
-                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={facilityId === f.id ? colors.onSurfaceInverse : colors.onSurface}>{f.name}</Txt>
-                </Pressable>
-              ))}
-            </ScrollView>
-
-            <Btn testID="generate-routes-button" title="GERAR ROTAS" icon="git-network" size="lg" loading={optimizing} onPress={generate} style={{ marginTop: spacing.md }} />
-          </>
+            );
+          })
         )}
       </ScrollView>
+
+      <ActionMenu
+        visible={!!menuFor} onClose={() => setMenuFor(null)} title={menuFor?.name}
+        items={menuFor ? [
+          { label: "Abrir", icon: "open-outline", onPress: () => router.push(`/template/${menuFor.id}` as any) },
+          { label: "Duplicar", icon: "copy-outline", disabled: busy, onPress: () => duplicate(menuFor) },
+          { label: menuFor.active ? "Arquivar" : "Reativar", icon: "archive-outline", disabled: busy, onPress: () => toggleArchive(menuFor) },
+        ] : []}
+      />
+
+      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => setCreateOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setCreateOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
+            <Txt variant="displaySm">NOVA ROTA REUTILIZÁVEL</Txt>
+            <Txt variant="label" style={{ marginTop: spacing.md }}>NOME</Txt>
+            <TextInput testID="new-template-name-input" style={styles.input} value={newName} onChangeText={setNewName}
+                      placeholder="Ex: Circuito Lustosa - Segunda" placeholderTextColor={colors.muted} autoFocus />
+            <Txt variant="label" style={{ marginTop: spacing.md }}>DESCRIÇÃO (OPCIONAL)</Txt>
+            <TextInput testID="new-template-description-input" style={[styles.input, { height: 70 }]} value={newDesc} onChangeText={setNewDesc}
+                      placeholder="Descrição" placeholderTextColor={colors.muted} multiline />
+            <Txt variant="mono" color={colors.muted} style={{ marginTop: spacing.sm, fontSize: 12 }}>
+              Paragens e depósito definem-se a seguir, no editor da rota.
+            </Txt>
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <Btn testID="cancel-new-template" title="CANCELAR" variant="outline" style={{ flex: 1 }} onPress={() => setCreateOpen(false)} />
+              <Btn testID="confirm-new-template" title="CRIAR E EDITAR" style={{ flex: 1 }} loading={creating} onPress={createTemplate} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
 
-function Stat({ label, value }: { label: string; value: any }) {
+function Stat({ icon, value }: { icon: keyof typeof Ionicons.glyphMap; value: string }) {
   return (
-    <View style={{ flex: 1 }}>
-      <Txt variant="monoBold" style={{ fontSize: 15 }}>{value}</Txt>
-      <Txt variant="label" style={{ fontSize: 9 }}>{label}</Txt>
+    <View style={styles.statItem}>
+      <Ionicons name={icon} size={11} color={colors.muted} />
+      <Txt variant="label" style={{ fontSize: 10 }}>{value}</Txt>
     </View>
   );
 }
@@ -339,25 +190,31 @@ function Stat({ label, value }: { label: string; value: any }) {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  createRow: { flexDirection: "row", gap: spacing.sm },
-  formHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  chipRow: { gap: spacing.sm, paddingVertical: 2 },
+  topRow: { flexDirection: "row", gap: spacing.sm, alignItems: "center" },
+  chipRow: { flexDirection: "row", gap: spacing.sm },
   chip: {
-    height: 34, justifyContent: "center", paddingHorizontal: spacing.md,
+    height: 30, justifyContent: "center", paddingHorizontal: spacing.md,
     borderWidth: border.width, borderColor: colors.border, borderRadius: radius.pill,
     backgroundColor: colors.surface,
   },
-  pickChip: {
-    minWidth: 160, gap: 2, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md,
-    backgroundColor: colors.surface,
+  chipOn: { backgroundColor: colors.fccBlue, borderColor: colors.fccBlue },
+  card: {
+    flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, borderWidth: border.width,
+    borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, backgroundColor: colors.surface,
   },
-  chipOn: { backgroundColor: colors.onSurface },
-  stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  stepper: { flexDirection: "row", alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: radius.pill },
-  stepBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
-  routeCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, gap: spacing.xs, backgroundColor: colors.surface },
-  routeHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  stTag: { borderRadius: radius.xs, paddingHorizontal: spacing.sm, paddingVertical: 3 },
-  routeStats: { flexDirection: "row", marginTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.xs },
+  cardIcon: {
+    width: 36, height: 36, borderRadius: radius.sm, backgroundColor: colors.fccBlueSoft,
+    alignItems: "center", justifyContent: "center",
+  },
+  cardHead: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  statsRow: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginTop: 4 },
+  statItem: { flexDirection: "row", alignItems: "center", gap: 3 },
+  menuBtn: { width: 30, height: 30, alignItems: "center", justifyContent: "center" },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
+  input: {
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontFamily: "SpaceGrotesk-Regular",
+    fontSize: 14, color: colors.onSurface, backgroundColor: colors.bg, marginTop: spacing.xs,
+  },
 });

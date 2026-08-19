@@ -127,13 +127,20 @@ class TestDashboardOnRouteCountFollowsRouteStatus:
 
 
 class TestFutureRouteTemplateSnapshot:
-    """Placeholder for Fase 1/2 (route_templates). Once route_templates
-    exists, replace this skip with a real test proving that editing a
-    template AFTER an execution was created from it never changes that
-    execution's already-persisted stops/geometry_cache — the single most
-    important invariant of the templates plan (architecture audit, section
-    5). Left as an explicit, visible skip rather than silently omitted."""
+    """route_templates now exists (Fase 1). The "editing a template never
+    changes something already copied FROM it" half of the invariant is
+    proven for the two copy paths that exist today —
+    test_route_templates.py::TestDuplicate and ::TestSaveRouteAsTemplate
+    (duplicate-from-template, template-from-route) — both edit the source
+    after copying and assert the copy is untouched.
 
-    @pytest.mark.skip(reason="route_templates does not exist yet — add in Fase 1/2")
+    What's still NOT provable yet: editing a template after an EXECUTION
+    (routes) was created FROM it — there is no "create execution from
+    template" endpoint yet (Fase 2). Left as an explicit, visible skip
+    rather than silently omitted; the design rule is already encoded ahead
+    of time in routers/route_templates.py::delete_template()'s docstring
+    (routes.template_id is checked there even though nothing sets it yet)."""
+
+    @pytest.mark.skip(reason="no 'create execution from template' endpoint yet — add in Fase 2")
     def test_editing_a_template_does_not_change_an_already_created_execution(self, h_admin_fcc):
         pass

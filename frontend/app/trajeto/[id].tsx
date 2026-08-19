@@ -1,10 +1,12 @@
 import { useCallback, useState } from "react";
-import { ScrollView, StyleSheet, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { ScreenHeader } from "@/src/components/Header";
-import { Loading, Txt } from "@/src/components/ui";
+import { Btn, Loading, Txt, useToast } from "@/src/components/ui";
 import FleetMap from "@/src/components/FleetMap";
 import { colors, spacing, border, radius, trackingSessionStatus } from "@/src/theme";
 
@@ -16,12 +18,37 @@ function formatTime(iso?: string | null): string {
 export default function TrajetoDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  const toast = useToast();
   const [session, setSession] = useState<any | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(() => {
     if (id) api.get<any>(`/tracking-sessions/${id}`).then(setSession).catch(() => setSession(null));
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  const createTemplate = async () => {
+    if (!name.trim()) { toast("Indique um nome", "error"); return; }
+    setCreating(true);
+    try {
+      // The recording itself (gps_positions, tracking_sessions) is never
+      // touched by this — only a brand-new, independent route_template gets
+      // written. See routers/tracking.py::save_session_as_template.
+      const t = await api.post<any>(`/tracking-sessions/${id}/save-as-template`, {
+        name: name.trim(), description,
+      });
+      setCreateOpen(false);
+      router.push(`/template/${t.id}` as any);
+    } catch (e: any) {
+      toast(e?.message || "Não foi possível criar a rota", "error");
+    } finally {
+      setCreating(false);
+    }
+  };
 
   if (!session) {
     return (<View style={styles.flex}><ScreenHeader title="TRAJETO" back /><Loading /></View>);
@@ -84,6 +111,9 @@ export default function TrajetoDetail() {
           <Cell label="INÍCIO" value={formatTime(session.started_at)} />
           <Cell label="FIM" value={formatTime(session.ended_at)} />
         </View>
+        <Btn testID="create-template-from-trajeto" title="CRIAR ROTA A PARTIR DESTE TRAJETO" icon="git-network"
+             variant="outline" disabled={points.length < 2} onPress={() => setCreateOpen(true)} />
+
         {!session.route_id && (
           <Txt variant="mono" color={colors.muted} style={{ fontSize: 12 }}>
             Este trajeto não está associado a nenhuma rota planeada.
@@ -115,6 +145,27 @@ export default function TrajetoDetail() {
           </View>
         )}
       </ScrollView>
+
+      <Modal visible={createOpen} transparent animationType="fade" onRequestClose={() => setCreateOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setCreateOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
+            <Txt variant="displaySm">CRIAR ROTA A PARTIR DO TRAJETO</Txt>
+            <Txt variant="mono" color={colors.muted} style={{ marginTop: spacing.xs, fontSize: 12 }}>
+              A gravação original não é alterada. A geometria é copiada dos pontos GPS; as paragens começam vazias — adicione-as depois no editor.
+            </Txt>
+            <Txt variant="label" style={{ marginTop: spacing.md }}>NOME</Txt>
+            <TextInput testID="trajeto-template-name-input" style={styles.input} value={name} onChangeText={setName}
+                      placeholder="Nome da rota" placeholderTextColor={colors.muted} autoFocus />
+            <Txt variant="label" style={{ marginTop: spacing.md }}>DESCRIÇÃO (OPCIONAL)</Txt>
+            <TextInput testID="trajeto-template-description-input" style={[styles.input, { height: 70 }]} value={description} onChangeText={setDescription}
+                      placeholder="Descrição" placeholderTextColor={colors.muted} multiline />
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <Btn testID="cancel-trajeto-template" title="CANCELAR" variant="outline" style={{ flex: 1 }} onPress={() => setCreateOpen(false)} />
+              <Btn testID="confirm-trajeto-template" title="CRIAR E EDITAR" style={{ flex: 1 }} loading={creating} onPress={createTemplate} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -142,4 +193,11 @@ const styles = StyleSheet.create({
     borderColor: colors.border, borderRadius: radius.md,
   },
   compareRow: { flexDirection: "row", justifyContent: "space-between" },
+  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
+  input: {
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontFamily: "SpaceGrotesk-Regular",
+    fontSize: 14, color: colors.onSurface, backgroundColor: colors.bg, marginTop: spacing.xs,
+  },
 });

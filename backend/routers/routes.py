@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.db import db, NO_ID
 from core.models import (OptimizeIn, StopReorderIn, StopMoveIn, StopCreateIn,
                          PreviewGeometryIn, PreviewOptimizeIn, ManualRouteIn,
-                         RouteAssignmentIn, RouteStartIn, RouteFinishIn, RouteDeleteIn)
+                         RouteAssignmentIn, RouteStartIn, RouteFinishIn, RouteDeleteIn,
+                         SaveRouteAsTemplateIn)
 from core.security import current_user, require_roles, tenant_query, write_audit, verify_password, MANAGEMENT_ROLES
 from services.optimizer import generate_routes, optimize_single, _route_distance, AVG_SPEED_KMH, SERVICE_MIN_PER_STOP
 from services.routing import road_route
@@ -373,6 +374,7 @@ async def optimize(body: OptimizeIn, request: Request,
             "capacity_utilization": p["capacity_utilization"],
             "load_kg": p["load_kg"],
             "actual_distance_km": None, "actual_duration_min": None,
+            "template_id": None,
             "status": "scheduled", "created_at": now_iso(),
         }
         await db.routes.insert_one(route_doc)
@@ -862,7 +864,7 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
         "distance_km": dist_km, "duration_min": duration_min,
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
-        "mode": body.mode,
+        "mode": body.mode, "template_id": None,
         "status": "scheduled", "created_at": now_iso(),
     }
     await db.routes.insert_one(route_doc)
@@ -1065,3 +1067,52 @@ async def finish_route(rid: str, request: Request, body: Optional[RouteFinishIn]
     await write_audit(user, "finish_route", "route", rid, request,
                       old={"status": "in_progress"}, new=updates)
     return {"ok": True, **updates}
+
+
+@router.post("/routes/{rid}/save-as-template")
+async def save_route_as_template(rid: str, body: SaveRouteAsTemplateIn, request: Request,
+                                 user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Fase 1 — copies only planning data (stops/geometry/planned distance
+    and duration) into a brand-new, independent route_template document.
+    Deliberately excludes status, date, started_at/completed_at, actual_*
+    metrics, and collection counts — none of that is "the plan", it's what
+    happened on one specific day. driver_id/vehicle_id are also NOT carried
+    over as the template's defaults: who's currently assigned to a route is
+    an operational fact, not a planning one — the admin can set
+    default_driver_id/default_vehicle_id explicitly afterward if they want
+    one. The source route itself is never modified."""
+    route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
+    if not route:
+        raise HTTPException(404, "Rota não encontrada")
+
+    tasks = await db.collection_tasks.find(
+        tenant_query(user, {"route_id": rid}), NO_ID).sort("sequence", 1).to_list(2000)
+    source_stops = await _stops_for_route(user, rid, tasks)
+
+    template_stops = [{
+        "id": str(uuid.uuid4()), "sequence": i + 1,
+        "lat": s["lat"], "lng": s["lng"], "address": s.get("address", ""),
+        "waste_types": s.get("waste_types", []),
+        "container_ids": [t["container_id"] for t in s.get("tasks", [])],
+    } for i, s in enumerate(source_stops)]
+
+    geo = route.get("geometry_cache") or await route_geometry(rid, user)
+
+    tid = str(uuid.uuid4())
+    doc = {
+        "id": tid, "company_id": route["company_id"],
+        "name": body.name, "description": body.description, "code": None,
+        "zone_id": route.get("zone_id"), "waste_type": route.get("waste_type"),
+        "start_depot_id": route.get("start_depot_id"), "end_facility_id": route.get("end_facility_id"),
+        "start_lat": route.get("start_lat"), "start_lng": route.get("start_lng"),
+        "end_lat": route.get("end_lat"), "end_lng": route.get("end_lng"),
+        "stops": template_stops, "geometry": geo,
+        "distance_km": route.get("distance_km") or 0.0, "duration_min": route.get("duration_min") or 0.0,
+        "default_driver_id": None, "default_vehicle_id": None,
+        "active": True, "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.route_templates.insert_one(doc)
+    doc.pop("_id", None)
+    await write_audit(user, "save_as_template", "route_template", tid, request,
+                      old={"source_route_id": rid}, new={"name": body.name})
+    return doc

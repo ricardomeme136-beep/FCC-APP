@@ -14,11 +14,11 @@ also updates the admin's live map like any other real device position.
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.db import db, NO_ID
-from core.models import TrackingSessionStartIn, TrackingPointsIn
-from core.security import current_user, tenant_query
+from core.models import TrackingSessionStartIn, TrackingPointsIn, SaveTrackingAsTemplateIn
+from core.security import current_user, tenant_query, require_roles, write_audit, MANAGEMENT_ROLES
 from routers.entities import now_iso
 from routers.routes import route_geometry
 from services.geo import haversine
@@ -209,3 +209,54 @@ async def get_session(sid: str, user: dict = Depends(current_user)):
         "points": points,
         "planned": planned,
     }
+
+
+@router.post("/{sid}/save-as-template")
+async def save_session_as_template(sid: str, body: SaveTrackingAsTemplateIn, request: Request,
+                                   user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Fase 1 — turns a recorded trajectory into a route_template. The
+    tracking_session and its gps_positions are read-only here: only a new,
+    separate route_templates document is written; nothing about the
+    recording is ever touched. Stops start EMPTY on purpose (see the Fase 1
+    audit) — a session's route_id (when present) reflects what was PLANNED,
+    which is not reliably the same as where the vehicle actually stopped
+    (that mismatch is exactly what the planned-vs-real comparison on this
+    same screen is for), so auto-copying those stops risks quietly mixing
+    two different sources of truth. The admin adds real stops afterward in
+    the template editor, using the same stop endpoints as any other
+    template. The geometry itself IS a copy of the recorded points (that
+    part is unambiguous and safe) — never a reference back to them."""
+    session = await db.tracking_sessions.find_one(tenant_query(user, {"id": sid}), NO_ID)
+    if not session:
+        raise HTTPException(404, "Sessão de gravação não encontrada")
+    points = await db.gps_positions.find(
+        tenant_query(user, {"tracking_session_id": sid}), NO_ID
+    ).sort("timestamp", 1).to_list(20000)
+    if len(points) < 2:
+        raise HTTPException(400, "Gravação sem pontos GPS suficientes para criar uma rota")
+
+    geometry = {
+        "coordinates": [{"latitude": p["lat"], "longitude": p["lng"]} for p in points],
+        "distance_m": round((session.get("distance_km") or 0) * 1000, 1),
+        "duration_s": round((session.get("duration_min") or 0) * 60, 1),
+        "steps": [], "provider": "tracking_session",
+    }
+
+    tid = str(uuid.uuid4())
+    doc = {
+        "id": tid, "company_id": session["company_id"],
+        "name": body.name, "description": body.description, "code": None,
+        "zone_id": None, "waste_type": None,
+        "start_depot_id": None, "end_facility_id": None,
+        "start_lat": points[0]["lat"], "start_lng": points[0]["lng"],
+        "end_lat": points[-1]["lat"], "end_lng": points[-1]["lng"],
+        "stops": [], "geometry": geometry,
+        "distance_km": session.get("distance_km") or 0.0, "duration_min": session.get("duration_min") or 0.0,
+        "default_driver_id": None, "default_vehicle_id": None,
+        "active": True, "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.route_templates.insert_one(doc)
+    doc.pop("_id", None)
+    await write_audit(user, "save_as_template_from_tracking", "route_template", tid, request,
+                      old={"source_session_id": sid}, new={"name": body.name})
+    return doc

@@ -22,6 +22,7 @@ const CATEGORIES: { title: string; items: Item[] }[] = [
     title: "Operação",
     items: [
       { label: "Rotas", icon: "navigate", route: "/(manager)/rotas" },
+      { label: "Execuções", icon: "git-network", route: "/(manager)/execucoes" },
       { label: "Trajetos gravados", icon: "recording", route: "/trajetos" },
       { label: "Ocorrências", icon: "warning", route: "/ocorrencias" },
     ],

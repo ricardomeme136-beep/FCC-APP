@@ -278,3 +278,77 @@ class HeartbeatIn(BaseModel):
 
 class AiQuery(BaseModel):
     question: str
+
+
+# ---- Route templates (Fase 1) ----
+
+class TemplateStopIn(BaseModel):
+    lat: float
+    lng: float
+    address: str = ""
+    container_ids: List[str] = []
+
+
+class RouteTemplateCreateIn(BaseModel):
+    name: str
+    description: str = ""
+    code: Optional[str] = None
+    zone_id: Optional[str] = None
+    waste_type: Optional[str] = None
+    start_depot_id: Optional[str] = None
+    end_facility_id: Optional[str] = None
+    start_lat: Optional[float] = None
+    start_lng: Optional[float] = None
+    end_lat: Optional[float] = None
+    end_lng: Optional[float] = None
+    stops: List[TemplateStopIn] = []
+    default_driver_id: Optional[str] = None
+    default_vehicle_id: Optional[str] = None
+
+
+class RouteTemplateUpdateIn(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    code: Optional[str] = None
+    zone_id: Optional[str] = None
+    waste_type: Optional[str] = None
+    start_depot_id: Optional[str] = None
+    end_facility_id: Optional[str] = None
+    start_lat: Optional[float] = None
+    start_lng: Optional[float] = None
+    end_lat: Optional[float] = None
+    end_lng: Optional[float] = None
+    default_driver_id: Optional[str] = None
+    default_vehicle_id: Optional[str] = None
+    active: Optional[bool] = None
+
+
+class TemplateStopReorderIn(BaseModel):
+    stop_ids: List[str]
+
+
+class TemplateStopCreateIn(BaseModel):
+    # Either attach existing containers (clustered into stops, same as
+    # routes.py's add_stop) or drop a free point with no containers yet
+    # (same flexibility create_manual_route already gives operational routes).
+    container_ids: List[str] = []
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    address: str = ""
+
+
+class TemplateStopUpdateIn(BaseModel):
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    address: Optional[str] = None
+    container_ids: Optional[List[str]] = None
+
+
+class SaveRouteAsTemplateIn(BaseModel):
+    name: str
+    description: str = ""
+
+
+class SaveTrackingAsTemplateIn(BaseModel):
+    name: str
+    description: str = ""

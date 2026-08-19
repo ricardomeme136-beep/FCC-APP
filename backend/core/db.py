@@ -34,9 +34,12 @@ async def ensure_indexes() -> None:
         "vehicles", "drivers", "containers", "routes", "collection_tasks",
         "incidents", "depots", "facilities", "customers", "zones",
         "gps_positions", "notifications", "audit_logs", "route_stops",
-        "tracking_sessions",
+        "tracking_sessions", "route_templates",
     ]:
         await db[coll].create_index([("company_id", 1)])
+    await db.route_templates.create_index("name")
+    await db.route_templates.create_index("active")
+    await db.route_templates.create_index([("company_id", 1), ("active", 1)])
     await db.gps_positions.create_index([("vehicle_id", 1), ("timestamp", -1)])
     await db.gps_positions.create_index([("tracking_session_id", 1), ("timestamp", 1)])
     # sparse: only recorded-trajectory points carry a point_uuid — live nav
