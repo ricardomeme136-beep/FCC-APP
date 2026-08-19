@@ -39,6 +39,7 @@ export default function Execucoes() {
   const [containerIds, setContainerIds] = useState<string[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [drivers, setDrivers] = useState<Driver[]>([]);
+  const [templates, setTemplates] = useState<any[]>([]);
   const [depots, setDepots] = useState<Place[]>([]);
   const [facilities, setFacilities] = useState<Place[]>([]);
   const [vehicleIds, setVehicleIds] = useState<string[]>([]);
@@ -58,16 +59,18 @@ export default function Execucoes() {
 
   useEffect(() => {
     (async () => {
-      const [v, d, dep, fac] = await Promise.all([
+      const [v, d, dep, fac, tpl] = await Promise.all([
         api.get<Vehicle[]>("/vehicles"),
         api.get<Driver[]>("/drivers"),
         api.get<Place[]>("/depots"),
         api.get<Place[]>("/facilities"),
+        api.get<any[]>("/route-templates"),
       ]);
       setVehicles(v.filter((x) => x.status === "available" || x.status === "assigned"));
       setDrivers(d.filter((x: any) => x.status === "available" || x.status === "assigned"));
       setDepots(dep);
       setFacilities(fac);
+      setTemplates(tpl);
       // Show the primary depot pre-selected instead of leaving it on the
       // implicit "AUTOMÁTICO" default — the admin sees exactly which depot
       // will be used before generating anything.
@@ -120,6 +123,8 @@ export default function Execucoes() {
     setVehicleIds([]);
     setDriverIds([]);
   };
+
+  const templateById = useMemo(() => Object.fromEntries(templates.map((t) => [t.id, t])), [templates]);
 
   const vehicleLabel = (v: Vehicle) =>
     `${v.plate} · ${v.capacity_kg}kg${v.allowed_waste_types?.length ? " · " + v.allowed_waste_types.map((w) => wasteLabels[w] || w).join("/") : ""}`;
@@ -193,6 +198,8 @@ export default function Execucoes() {
                 .filter((r) => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.driver_name?.toLowerCase().includes(search.toLowerCase()))
                 .map((r) => {
                 const st = routeStatus[r.status] || routeStatus.scheduled;
+                const tpl = r.template_id ? templateById[r.template_id] : null;
+                const vehiclePlate = vehicles.find((v) => v.id === r.vehicle_id)?.plate;
                 return (
                   <Pressable key={r.id} testID={`route-${r.id}`} onPress={() => router.push(`/route/${r.id}` as any)}>
                     <View style={styles.routeCard}>
@@ -202,9 +209,16 @@ export default function Execucoes() {
                           <Txt variant="monoBold" color="#fff" style={{ fontSize: 10 }}>{st.label}</Txt>
                         </View>
                       </View>
+                      {tpl && (
+                        <View style={styles.templateTag}>
+                          <Ionicons name="git-network" size={11} color={colors.fccBlue} />
+                          <Txt variant="label" color={colors.fccBlue} numberOfLines={1}>{tpl.name}</Txt>
+                        </View>
+                      )}
                       <Txt variant="mono" color={colors.muted}>
-                        {r.driver_name || "Sem motorista"} · {wasteLabels[r.waste_type] || r.waste_type}
+                        {r.date}{r.planned_start_time ? ` · ${r.planned_start_time}` : ""} · {r.driver_name || "Sem motorista"}{vehiclePlate ? ` · ${vehiclePlate}` : ""}
                       </Txt>
+                      <Txt variant="label" color={colors.muted}>{wasteLabels[r.waste_type] || r.waste_type || ""}</Txt>
                       <View style={styles.routeStats}>
                         <Stat label="RECOLHAS" value={r.num_stops} />
                         <Stat label="DISTÂNCIA" value={`${r.distance_km} km`} />
@@ -353,6 +367,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   chipOn: { backgroundColor: colors.onSurface },
+  templateTag: { flexDirection: "row", alignItems: "center", gap: 4 },
   stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   stepper: { flexDirection: "row", alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: radius.pill },
   stepBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },

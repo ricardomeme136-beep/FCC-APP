@@ -17,6 +17,7 @@ first invariant of the whole templates plan trivially true: a template's
 stops are physically independent documents from any `routes`/`route_stops`
 created from it — an execution copies plain dicts, never references back.
 """
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,11 +26,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.db import db, NO_ID
 from core.models import (RouteTemplateCreateIn, RouteTemplateUpdateIn, TemplateStopReorderIn,
-                         TemplateStopCreateIn, TemplateStopUpdateIn)
+                         TemplateStopCreateIn, TemplateStopUpdateIn, CreateExecutionFromTemplateIn)
 from core.security import current_user, require_roles, tenant_query, write_audit, MANAGEMENT_ROLES
 from services.routing import road_route
 from services.stops import cluster_into_stops
 from services.optimizer import SERVICE_MIN_PER_STOP
+from routers.routes import _route_code, check_scheduling_conflicts
 
 router = APIRouter(prefix="/route-templates", tags=["route-templates"])
 
@@ -302,3 +304,118 @@ async def remove_template_stop(tid: str, sid: str, request: Request,
     template = await _save_with_fresh_geometry(user, template)
     await write_audit(user, "remove", "route_template_stop", sid, request)
     return template
+
+
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@router.post("/{tid}/create-execution")
+async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, request: Request,
+                           user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Fase 2 — the ONLY way a route_template turns into a real, operational
+    `routes` document. Everything written here is a snapshot copy: stops,
+    geometry, containers, distance/duration are all read from the template
+    exactly once, right now, and never referenced again — editing the
+    template after this point (or even deleting it) must never change this
+    execution. Reuses _route_code() and check_scheduling_conflicts() from
+    routers/routes.py rather than duplicating them; the stop/task-creation
+    loop below is structurally the same shape as optimize()'s (each stop
+    already carries a list of containers, pre-grouped — unlike
+    create_manual_route()'s one-container-per-stop shape, so it isn't a fit
+    for reusing that loop directly)."""
+    template = await _get_template_or_404(user, tid)
+    if not template.get("active", True):
+        raise HTTPException(400, "Este template está arquivado — reative-o antes de criar uma execução")
+    if body.start_time and not _TIME_RE.match(body.start_time):
+        raise HTTPException(400, "Hora inválida — use o formato HH:MM")
+
+    driver = None
+    if body.driver_id:
+        driver = await db.drivers.find_one(tenant_query(user, {"id": body.driver_id}), NO_ID)
+        if not driver:
+            raise HTTPException(400, "Motorista inválido")
+    vehicle = None
+    if body.vehicle_id:
+        vehicle = await db.vehicles.find_one(tenant_query(user, {"id": body.vehicle_id}), NO_ID)
+        if not vehicle:
+            raise HTTPException(400, "Viatura inválida")
+
+    warnings = await check_scheduling_conflicts(user, body.date, body.driver_id, body.vehicle_id)
+
+    # Resolve every container referenced by the template NOW — the execution
+    # must never depend on reading the template again later (point 10). If a
+    # container was deleted since the template was last edited, fail loudly
+    # rather than silently creating a task that points nowhere.
+    all_container_ids = [cid for s in template["stops"] for cid in s.get("container_ids", [])]
+    containers_by_id = {}
+    if all_container_ids:
+        found = await db.containers.find(
+            tenant_query(user, {"id": {"$in": all_container_ids}}), NO_ID).to_list(2000)
+        containers_by_id = {c["id"]: c for c in found}
+        missing = set(all_container_ids) - set(containers_by_id)
+        if missing:
+            raise HTTPException(
+                400, f"{len(missing)} contentor(es) deste template já não existem — atualize o template primeiro")
+
+    company_id = user["company_id"]
+    rid = str(uuid.uuid4())
+    route_doc = {
+        "id": rid, "company_id": company_id,
+        "code": _route_code(await db.routes.count_documents({"company_id": company_id})),
+        "date": body.date, "planned_start_time": body.start_time, "zone_id": template.get("zone_id"),
+        "driver_id": driver["id"] if driver else None,
+        "driver_name": driver["name"] if driver else None,
+        "vehicle_id": vehicle["id"] if vehicle else None,
+        "start_depot_id": template.get("start_depot_id"),
+        "start_lat": template.get("start_lat"), "start_lng": template.get("start_lng"),
+        "end_facility_id": template.get("end_facility_id"),
+        "end_lat": template.get("end_lat"), "end_lng": template.get("end_lng"),
+        "waste_type": template.get("waste_type"), "num_stops": len(all_container_ids),
+        "distance_km": template.get("distance_km") or 0.0, "duration_min": template.get("duration_min") or 0.0,
+        "capacity_utilization": 0, "load_kg": 0,
+        "actual_distance_km": None, "actual_duration_min": None,
+        "mode": "template", "template_id": tid,
+        "status": "scheduled", "created_at": now_iso(),
+        # Snapshotted directly, never lazily recomputed from the template —
+        # the whole point of this field per point 2 of the spec.
+        "geometry_cache": template.get("geometry"),
+    }
+    await db.routes.insert_one(route_doc)
+
+    task_seq = 0
+    for stop_seq, s in enumerate(template["stops"]):
+        stop_id = str(uuid.uuid4())
+        task_ids = []
+        for cid in s.get("container_ids", []):
+            c = containers_by_id[cid]
+            task_seq += 1
+            new_tid = str(uuid.uuid4())
+            task_ids.append(new_tid)
+            await db.collection_tasks.insert_one({
+                "id": new_tid, "company_id": company_id,
+                "route_id": rid, "container_id": c["id"], "stop_id": stop_id,
+                "driver_id": driver["id"] if driver else None,
+                "vehicle_id": vehicle["id"] if vehicle else None,
+                "sequence": task_seq, "waste_type": c["waste_type"],
+                "address": c.get("address", ""), "lat": c["lat"], "lng": c["lng"],
+                "status": "scheduled", "scheduled_date": body.date,
+                "load_kg": None, "arrived_at": None, "completed_at": None,
+                "gps": None, "photo_url": None, "notes": "", "fail_reason": None,
+            })
+        await db.route_stops.insert_one({
+            "id": stop_id, "company_id": company_id, "route_id": rid,
+            "sequence": stop_seq + 1, "lat": s["lat"], "lng": s["lng"],
+            "address": s.get("address", ""), "waste_types": s.get("waste_types", []),
+            "task_ids": task_ids, "created_at": now_iso(),
+        })
+
+    if vehicle:
+        await db.vehicles.update_one(tenant_query(user, {"id": vehicle["id"]}), {"$set": {"status": "assigned"}})
+    if driver:
+        await db.drivers.update_one(tenant_query(user, {"id": driver["id"]}),
+                                    {"$set": {"status": "assigned", "vehicle_id": vehicle["id"] if vehicle else None}})
+
+    route_doc.pop("_id", None)
+    await write_audit(user, "create_execution_from_template", "route", rid, request,
+                      old={"template_id": tid}, new={"date": body.date, "code": route_doc["code"]})
+    return {"route": route_doc, "warnings": warnings}

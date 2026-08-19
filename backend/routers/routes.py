@@ -145,6 +145,32 @@ REOPTIMIZE_STATUSES = {"scheduled", "in_progress"}
 _STATUS_LABEL_PT = {"in_progress": "em curso", "completed": "concluída", "cancelled": "arquivada/eliminada"}
 
 
+async def check_scheduling_conflicts(user: dict, date: str, driver_id: Optional[str],
+                                     vehicle_id: Optional[str]) -> list:
+    """Simple, advisory-only scheduling check (Fase 2, point 6) — never
+    blocks creation, just reports what it finds so the caller can warn. Only
+    checks "does this driver/vehicle already have another active route the
+    same day" against real routes; a full availability system (leave,
+    maintenance, workshop status) is an explicitly deferred future extension
+    — it would plug in here as more checks appended to the same list, not a
+    redesign of this function's shape or callers."""
+    ACTIVE_STATUSES = ["scheduled", "in_progress"]
+    warnings = []
+    if driver_id:
+        existing = await db.routes.find_one(tenant_query(user, {
+            "driver_id": driver_id, "date": date, "status": {"$in": ACTIVE_STATUSES},
+        }), NO_ID)
+        if existing:
+            warnings.append(f"O motorista já tem a rota {existing.get('code')} nesta data.")
+    if vehicle_id:
+        existing = await db.routes.find_one(tenant_query(user, {
+            "vehicle_id": vehicle_id, "date": date, "status": {"$in": ACTIVE_STATUSES},
+        }), NO_ID)
+        if existing:
+            warnings.append(f"A viatura já está atribuída à rota {existing.get('code')} nesta data.")
+    return warnings
+
+
 def assert_route_editable(route: dict, *, for_reoptimize: bool = False) -> None:
     """Single guard for every stop-structure-changing endpoint below (reorder,
     move, add, remove stop) plus reoptimize()'s structural resequencing.
@@ -374,7 +400,7 @@ async def optimize(body: OptimizeIn, request: Request,
             "capacity_utilization": p["capacity_utilization"],
             "load_kg": p["load_kg"],
             "actual_distance_km": None, "actual_duration_min": None,
-            "template_id": None,
+            "template_id": None, "planned_start_time": None,
             "status": "scheduled", "created_at": now_iso(),
         }
         await db.routes.insert_one(route_doc)
@@ -864,7 +890,7 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
         "distance_km": dist_km, "duration_min": duration_min,
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
-        "mode": body.mode, "template_id": None,
+        "mode": body.mode, "template_id": None, "planned_start_time": None,
         "status": "scheduled", "created_at": now_iso(),
     }
     await db.routes.insert_one(route_doc)

@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -11,6 +11,20 @@ import FleetMap from "@/src/components/FleetMap";
 import ContainerPicker from "@/src/components/ContainerPicker";
 import { agoLabel } from "@/src/utils/time";
 import { colors, spacing, border, radius, wasteLabels } from "@/src/theme";
+
+function nextDays(n: number) {
+  const out: { date: string; label: string }[] = [];
+  const base = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    const iso = d.toISOString().slice(0, 10);
+    const label = i === 0 ? "HOJE" : i === 1 ? "AMANHÃ" : d.toLocaleDateString("pt-PT", { weekday: "short", day: "2-digit", month: "2-digit" }).toUpperCase();
+    out.push({ date: iso, label });
+  }
+  return out;
+}
+const DATE_OPTIONS = nextDays(14);
 
 export default function TemplateDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -34,6 +48,13 @@ export default function TemplateDetail() {
   const [assignFor, setAssignFor] = useState<"driver" | "vehicle" | null>(null);
   const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [schedDate, setSchedDate] = useState(DATE_OPTIONS[0].date);
+  const [schedTime, setSchedTime] = useState("");
+  const [schedDriverId, setSchedDriverId] = useState<string | null>(null);
+  const [schedVehicleId, setSchedVehicleId] = useState<string | null>(null);
+  const [scheduling, setScheduling] = useState(false);
+  const [sameDateRoutes, setSameDateRoutes] = useState<any[]>([]);
 
   const load = useCallback(async () => {
     const [t, d, v, containers] = await Promise.all([
@@ -48,6 +69,16 @@ export default function TemplateDetail() {
     setContainersById(Object.fromEntries(containers.map((c) => [c.id, c])));
   }, [id]);
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Same lightweight, non-blocking conflict check route/[id].tsx already
+  // uses for reassigning a driver/vehicle — a warning label next to each
+  // option, never a hard block. Re-fetched whenever the picked date changes.
+  useEffect(() => {
+    if (!scheduleOpen) return;
+    api.get<any[]>("/routes").then((all) => setSameDateRoutes(
+      all.filter((r) => r.date === schedDate && r.status !== "completed" && r.status !== "cancelled")
+    )).catch(() => setSameDateRoutes([]));
+  }, [scheduleOpen, schedDate]);
 
   if (!template) return (<View style={styles.flex}><ScreenHeader title="ROTA" back /><Loading /></View>);
 
@@ -141,6 +172,48 @@ export default function TemplateDetail() {
     }
   };
 
+  const openSchedule = () => {
+    setSchedDate(DATE_OPTIONS[0].date);
+    setSchedTime("");
+    setSchedDriverId(template.default_driver_id || null);
+    setSchedVehicleId(template.default_vehicle_id || null);
+    setScheduleOpen(true);
+  };
+
+  const driverAvailability = (d: any) => {
+    const busyRoute = sameDateRoutes.find((r) => r.driver_id === d.id);
+    if (busyRoute) return { label: `JÁ TEM ROTA ${busyRoute.code}`, color: colors.warning };
+    return { label: "DISPONÍVEL", color: colors.success };
+  };
+  const vehicleAvailability = (v: any) => {
+    const busyRoute = sameDateRoutes.find((r) => r.vehicle_id === v.id);
+    if (busyRoute) return { label: `JÁ TEM ROTA ${busyRoute.code}`, color: colors.warning };
+    return { label: "DISPONÍVEL", color: colors.success };
+  };
+
+  const createExecution = async () => {
+    if (schedTime && !/^([01]\d|2[0-3]):[0-5]\d$/.test(schedTime.trim())) {
+      toast("Hora inválida — use o formato HH:MM", "error");
+      return;
+    }
+    setScheduling(true);
+    try {
+      const body: any = { date: schedDate };
+      if (schedTime.trim()) body.start_time = schedTime.trim();
+      if (schedDriverId) body.driver_id = schedDriverId;
+      if (schedVehicleId) body.vehicle_id = schedVehicleId;
+      const res = await api.post<{ route: any; warnings: string[] }>(`/route-templates/${id}/create-execution`, body);
+      setScheduleOpen(false);
+      if (res.warnings?.length) toast(res.warnings.join(" "), "info");
+      toast("Execução criada", "success");
+      router.replace(`/route/${res.route.id}` as any);
+    } catch (e: any) {
+      toast(e?.message || "Erro ao criar execução", "error");
+    } finally {
+      setScheduling(false);
+    }
+  };
+
   return (
     <View style={styles.flex}>
       <ScreenHeader
@@ -187,6 +260,12 @@ export default function TemplateDetail() {
           <Cell label="DURAÇÃO" value={`${Math.round(template.duration_min || 0)}min`} />
         </View>
         <Txt variant="label" color={colors.muted}>ATUALIZADA {agoLabel(template.updated_at)}</Txt>
+
+        <Btn testID="schedule-execution-button" title="AGENDAR / CRIAR EXECUÇÃO" icon="calendar" size="lg"
+             disabled={!template.active} onPress={openSchedule} />
+        {!template.active && (
+          <Txt variant="label" color={colors.muted}>Reative esta rota para poder criar uma execução.</Txt>
+        )}
 
         <Btn testID="add-template-stop-button" title="ADICIONAR PARAGEM" variant="outline" icon="add" loading={busy} onPress={() => setAddOpen(true)} />
 
@@ -308,6 +387,67 @@ export default function TemplateDetail() {
         </Pressable>
       </Modal>
 
+      <Modal visible={scheduleOpen} transparent animationType="slide" onRequestClose={() => setScheduleOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setScheduleOpen(false)}>
+          <Pressable style={[styles.sheet, { maxHeight: "85%", paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
+            <Txt variant="displaySm">CRIAR EXECUÇÃO</Txt>
+            <Txt variant="mono" color={colors.muted} style={{ fontSize: 12, marginTop: 2 }}>A partir de "{template.name}"</Txt>
+            <ScrollView contentContainerStyle={{ gap: spacing.sm, paddingTop: spacing.md }}>
+              <Txt variant="label">DATA</Txt>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 2 }}>
+                {DATE_OPTIONS.map((d) => (
+                  <Pressable key={d.date} testID={`sched-date-${d.date}`} onPress={() => setSchedDate(d.date)}
+                    style={[styles.chip, schedDate === d.date ? styles.chipOn : null]}>
+                    <Txt variant="monoBold" style={{ fontSize: 11 }} color={schedDate === d.date ? colors.onSurfaceInverse : colors.onSurface}>{d.label}</Txt>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              <Txt variant="label" style={{ marginTop: spacing.sm }}>HORA PREVISTA (OPCIONAL)</Txt>
+              <TextInput testID="sched-time-input" style={styles.input} value={schedTime} onChangeText={setSchedTime}
+                        placeholder="Ex: 06:00" placeholderTextColor={colors.muted} maxLength={5} />
+
+              <Txt variant="label" style={{ marginTop: spacing.sm }}>MOTORISTA</Txt>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 2 }}>
+                <Pressable testID="sched-driver-none" onPress={() => setSchedDriverId(null)} style={[styles.chip, !schedDriverId ? styles.chipOn : null]}>
+                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={!schedDriverId ? colors.onSurfaceInverse : colors.onSurface}>SEM MOTORISTA</Txt>
+                </Pressable>
+                {drivers.map((d) => {
+                  const on = schedDriverId === d.id;
+                  const av = driverAvailability(d);
+                  return (
+                    <Pressable key={d.id} testID={`sched-driver-${d.id}`} onPress={() => setSchedDriverId(d.id)} style={[styles.pickChip, on ? styles.chipOn : null]}>
+                      <Txt variant="monoBold" style={{ fontSize: 11 }} color={on ? colors.onSurfaceInverse : colors.onSurface}>{d.name}</Txt>
+                      <Txt variant="label" color={on ? "#D1D5DB" : av.color}>{av.label}</Txt>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <Txt variant="label" style={{ marginTop: spacing.sm }}>VIATURA</Txt>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: spacing.sm, paddingVertical: 2 }}>
+                <Pressable testID="sched-vehicle-none" onPress={() => setSchedVehicleId(null)} style={[styles.chip, !schedVehicleId ? styles.chipOn : null]}>
+                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={!schedVehicleId ? colors.onSurfaceInverse : colors.onSurface}>SEM VIATURA</Txt>
+                </Pressable>
+                {vehicles.map((v) => {
+                  const on = schedVehicleId === v.id;
+                  const av = vehicleAvailability(v);
+                  return (
+                    <Pressable key={v.id} testID={`sched-vehicle-${v.id}`} onPress={() => setSchedVehicleId(v.id)} style={[styles.pickChip, on ? styles.chipOn : null]}>
+                      <Txt variant="monoBold" style={{ fontSize: 11 }} color={on ? colors.onSurfaceInverse : colors.onSurface}>{v.plate}</Txt>
+                      <Txt variant="label" color={on ? "#D1D5DB" : av.color}>{av.label}</Txt>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+
+              <Btn testID="confirm-schedule-execution" title="CRIAR EXECUÇÃO" icon="calendar" size="lg" loading={scheduling}
+                   onPress={createExecution} style={{ marginTop: spacing.md }} />
+            </ScrollView>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       <ActionMenu
         visible={actionsOpen} onClose={() => setActionsOpen(false)} title="AÇÕES"
         items={[
@@ -365,4 +505,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md, paddingVertical: spacing.sm, fontFamily: "SpaceGrotesk-Regular",
     fontSize: 14, color: colors.onSurface, backgroundColor: colors.bg, marginTop: spacing.xs,
   },
+  chip: {
+    height: 34, justifyContent: "center", paddingHorizontal: spacing.md,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.pill,
+    backgroundColor: colors.surface,
+  },
+  pickChip: {
+    minWidth: 150, gap: 2, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md,
+    backgroundColor: colors.surface,
+  },
+  chipOn: { backgroundColor: colors.fccBlue, borderColor: colors.fccBlue },
 });

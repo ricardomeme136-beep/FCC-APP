@@ -352,3 +352,12 @@ class SaveRouteAsTemplateIn(BaseModel):
 class SaveTrackingAsTemplateIn(BaseModel):
     name: str
     description: str = ""
+
+
+# ---- Route executions from templates (Fase 2) ----
+
+class CreateExecutionFromTemplateIn(BaseModel):
+    date: str
+    start_time: Optional[str] = None  # "HH:MM" — planned_start_time on the created route
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
