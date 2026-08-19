@@ -130,6 +130,31 @@ def _driver_scope(user: dict, extra: Optional[dict] = None) -> dict:
     return q
 
 
+# A completed/cancelled route is historical record — its shape (which stops,
+# in what order, with which containers) must never change after the fact, or
+# every "actual vs planned" comparison and audit trail built on top of it
+# becomes unreliable. in_progress is a middle ground: reoptimize() was built
+# specifically to be safe mid-route (it only ever resequences tasks still
+# scheduled/en_route/arrived — anything collected/failed is left exactly
+# where it is), so it stays allowed; a blind manual reorder/move/add/remove
+# was not built with "the driver is currently out on this route" in mind, so
+# those are blocked by default while in_progress too.
+STRUCTURAL_EDIT_STATUSES = {"scheduled"}
+REOPTIMIZE_STATUSES = {"scheduled", "in_progress"}
+_STATUS_LABEL_PT = {"in_progress": "em curso", "completed": "concluída", "cancelled": "arquivada/eliminada"}
+
+
+def assert_route_editable(route: dict, *, for_reoptimize: bool = False) -> None:
+    """Single guard for every stop-structure-changing endpoint below (reorder,
+    move, add, remove stop) plus reoptimize()'s structural resequencing.
+    Never used for task-level actions (complete/fail/ignore), route
+    start/finish, or tracking — those have their own, unrelated status rules."""
+    allowed = REOPTIMIZE_STATUSES if for_reoptimize else STRUCTURAL_EDIT_STATUSES
+    if route["status"] not in allowed:
+        label = _STATUS_LABEL_PT.get(route["status"], route["status"])
+        raise HTTPException(409, f"Esta rota está {label} — já não é possível alterar a sua estrutura")
+
+
 @router.get("/routes")
 async def list_routes(user: dict = Depends(current_user)):
     routes = await db.routes.find(_driver_scope(user), NO_ID).sort("created_at", -1).to_list(1000)
@@ -399,6 +424,7 @@ async def reoptimize(rid: str, request: Request,
     route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
     if not route:
         raise HTTPException(404, "Rota não encontrada")
+    assert_route_editable(route, for_reoptimize=True)
     remaining = await db.collection_tasks.find(
         tenant_query(user, {"route_id": rid,
                             "status": {"$in": ["scheduled", "en_route", "arrived"]}}),
@@ -462,6 +488,7 @@ async def reorder_stops(rid: str, body: StopReorderIn, request: Request,
     route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
     if not route:
         raise HTTPException(404, "Rota não encontrada")
+    assert_route_editable(route)
     await _ensure_persisted_stops(user, route)
 
     stops = await db.route_stops.find(tenant_query(user, {"route_id": rid}), NO_ID).to_list(2000)
@@ -482,9 +509,11 @@ async def move_stop(rid: str, sid: str, body: StopMoveIn, request: Request,
     source = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
     if not source:
         raise HTTPException(404, "Rota de origem não encontrada")
+    assert_route_editable(source)
     target = await db.routes.find_one(tenant_query(user, {"id": body.target_route_id}), NO_ID)
     if not target:
         raise HTTPException(404, "Rota de destino não encontrada")
+    assert_route_editable(target)
     if target["id"] == source["id"]:
         raise HTTPException(400, "A paragem já está nesta rota")
     if target["date"] != source["date"]:
@@ -545,6 +574,7 @@ async def add_stop(rid: str, body: StopCreateIn, request: Request,
     route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
     if not route:
         raise HTTPException(404, "Rota não encontrada")
+    assert_route_editable(route)
     if not body.container_ids:
         raise HTTPException(400, "Selecione pelo menos um contentor")
 
@@ -613,6 +643,7 @@ async def remove_stop(rid: str, sid: str, request: Request,
     route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
     if not route:
         raise HTTPException(404, "Rota não encontrada")
+    assert_route_editable(route)
     await _ensure_persisted_stops(user, route)
 
     stop = await db.route_stops.find_one(tenant_query(user, {"id": sid, "route_id": rid}), NO_ID)
