@@ -2,6 +2,11 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    // Only needed for src/utils/*.test.ts, which import with an explicit
+    // .ts extension so Node's built-in test runner (no bundler, no jest)
+    // can resolve them directly — see package.json's "test" script. Doesn't
+    // affect Metro/RN bundling, which has its own resolver and ignores this.
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": [
         "./*"

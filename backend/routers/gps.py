@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from core.db import db, NO_ID
 from core.models import GpsIn
@@ -14,13 +14,31 @@ router = APIRouter(tags=["gps"])
 
 @router.post("/gps/location")
 async def post_location(body: GpsIn, user: dict = Depends(current_user)):
+    """A driver can only ever report a position for the vehicle on their own
+    in_progress route — the vehicle_id is resolved server-side from the
+    authenticated driver, never trusted from the request body. Non-driver
+    roles (e.g. an admin tool) may still target an explicit vehicle_id."""
+    vehicle_id = body.vehicle_id
+    if user["role"] == "driver":
+        if not user.get("driver_id"):
+            raise HTTPException(403, "Esta conta não está associada a um motorista")
+        route = await db.routes.find_one(
+            tenant_query(user, {"driver_id": user["driver_id"], "status": "in_progress"}), NO_ID)
+        if not route or not route.get("vehicle_id"):
+            raise HTTPException(400, "Sem rota em curso com viatura atribuída")
+        vehicle_id = route["vehicle_id"]
+
+    vehicle = await db.vehicles.find_one(tenant_query(user, {"id": vehicle_id}), NO_ID)
+    if not vehicle:
+        raise HTTPException(404, "Viatura não encontrada")
+
     doc = {"id": str(uuid.uuid4()), "company_id": user["company_id"],
-           "vehicle_id": body.vehicle_id, "lat": body.lat, "lng": body.lng,
+           "vehicle_id": vehicle_id, "lat": body.lat, "lng": body.lng,
            "speed": body.speed, "heading": body.heading, "status": body.status,
-           "timestamp": now_iso()}
+           "source": "device", "timestamp": now_iso()}
     await db.gps_positions.insert_one(doc)
     await db.vehicles.update_one(
-        tenant_query(user, {"id": body.vehicle_id}),
+        tenant_query(user, {"id": vehicle_id}),
         {"$set": {"status": body.status if body.status else "en_route"}})
     doc.pop("_id", None)
     return doc

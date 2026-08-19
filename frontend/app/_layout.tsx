@@ -9,6 +9,10 @@ import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { useAppFonts } from "@/src/hooks/use-app-fonts";
 import { AuthProvider } from "@/src/auth/AuthContext";
 import { ToastProvider } from "@/src/components/ui";
+// Side-effect only — TaskManager.defineTask() must run in the JS global
+// scope, before any component mounts, so the OS can find this task even
+// when it relaunches the app headlessly to deliver a background update.
+import "@/src/tracking/backgroundLocationTask";
 
 // Disable logbox errors etc so that users can see the app
 // and agent works as expected.

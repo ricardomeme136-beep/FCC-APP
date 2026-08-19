@@ -1,4 +1,6 @@
 """Authentication endpoints."""
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from core.db import db
@@ -20,6 +22,8 @@ async def login(body: LoginIn):
         raise HTTPException(status_code=401, detail="Credenciais incorretas")
     if user.get("disabled"):
         raise HTTPException(status_code=401, detail="Esta conta está desativada. Contacte o administrador.")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_login_at": now, "last_seen_at": now}})
     token = issue_token(user)
     company = None
     if user.get("company_id"):

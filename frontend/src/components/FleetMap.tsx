@@ -29,6 +29,13 @@ export default function FleetMap({ markers, polylines, onPressMarker, onDragMark
         style={styles.web}
         javaScriptEnabled
         domStorageEnabled
+        // Android only: without this, the WebView is promoted to its own
+        // hardware-composited layer (effectively a SurfaceView), which
+        // paints above every sibling View regardless of JSX order, zIndex,
+        // or elevation — the exact "instruction bar hidden behind the map"
+        // bug reported on a real Android device. Forcing it off makes the
+        // WebView participate in normal view stacking again.
+        renderToHardwareTextureAndroid={false}
         onLoadEnd={deliver}
         onMessage={(e) => {
           try {

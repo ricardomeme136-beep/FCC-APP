@@ -50,7 +50,7 @@ export async function getCurrentLocation(): Promise<{ lat: number; lng: number }
 
 export type PositionUpdate = {
   lat: number; lng: number;
-  heading: number | null; speed: number | null; accuracy: number | null;
+  heading: number | null; speed: number | null; accuracy: number | null; altitude: number | null;
 };
 
 // Continuous tracking for the in-app navigation screen — distinct from
@@ -80,12 +80,33 @@ export async function watchPosition(
         onUpdate({
           lat: pos.coords.latitude, lng: pos.coords.longitude,
           heading: pos.coords.heading ?? null, speed: pos.coords.speed ?? null,
-          accuracy: pos.coords.accuracy ?? null,
+          accuracy: pos.coords.accuracy ?? null, altitude: pos.coords.altitude ?? null,
         });
       }
     );
   } catch {
     onError(new LocationError("Não foi possível iniciar o rastreio de localização.", "unavailable"));
+    return { remove: () => {} };
+  }
+}
+
+export type HeadingUpdate = { trueHeading: number; magHeading: number; accuracy: number };
+
+// Foreground-only compass/magnetometer stream for the driver's own on-screen
+// marker (see src/utils/heading.ts). No new permission and no new native
+// module: watchHeadingAsync ships in the already-linked expo-location build.
+// Never touches background tracking — callers must call .remove() on unmount,
+// same lifecycle as watchPosition, and this is never started from the
+// background task. Silently no-ops if the device has no compass rather than
+// surfacing an error — the caller's fuseHeading() already falls back to GPS.
+export async function watchDeviceHeading(
+  onUpdate: (heading: HeadingUpdate) => void
+): Promise<{ remove: () => void }> {
+  try {
+    return await Location.watchHeadingAsync((h) => {
+      onUpdate({ trueHeading: h.trueHeading, magHeading: h.magHeading, accuracy: h.accuracy });
+    });
+  } catch {
     return { remove: () => {} };
   }
 }

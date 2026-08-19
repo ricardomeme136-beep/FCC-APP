@@ -11,7 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from core.db import db, ensure_indexes, NO_ID
 from core.security import current_user
 from services.geo import haversine, bearing, move_towards
-from routers import auth, entities, routes as routes_router, tasks, gps, incidents, analytics, ai, users
+from routers import auth, entities, routes as routes_router, tasks, gps, incidents, analytics, ai, users, geocode, tracking
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -41,6 +41,8 @@ api.include_router(incidents.router)
 api.include_router(analytics.router)
 api.include_router(ai.router)
 api.include_router(users.router)
+api.include_router(geocode.router)
+api.include_router(tracking.router)
 
 app.include_router(api)
 
@@ -68,6 +70,12 @@ async def _simulate_gps():
                     {"vehicle_id": v["id"]}, NO_ID, sort=[("timestamp", -1)])
                 if not last:
                     continue
+                if last.get("source") == "device":
+                    # A real driver is actively reporting GPS for this
+                    # vehicle — never fight it with fake positions.
+                    seen = datetime.fromisoformat(last["timestamp"])
+                    if (datetime.now(timezone.utc) - seen).total_seconds() < 180:
+                        continue
                 cur = (last["lat"], last["lng"])
                 # find next pending task on an in-progress/scheduled route
                 task = await db.collection_tasks.find_one(
@@ -84,7 +92,7 @@ async def _simulate_gps():
                     "id": str(uuid.uuid4()), "company_id": v.get("company_id"),
                     "vehicle_id": v["id"], "lat": nxt[0], "lng": nxt[1],
                     "speed": round(spd, 1), "heading": round(bearing(cur, target), 1),
-                    "status": "en_route",
+                    "status": "en_route", "source": "simulated",
                     "timestamp": datetime.now(timezone.utc).isoformat()})
                 if v.get("status") != "en_route":
                     await db.vehicles.update_one({"id": v["id"]},

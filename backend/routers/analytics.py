@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 
 from core.db import db, NO_ID
 from core.security import current_user, tenant_query
+from core.activity import annotate_driver_activity
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -51,6 +52,33 @@ async def dashboard(user: dict = Depends(current_user)):
     recent_incidents = await db.incidents.find(
         tenant_query(user), NO_ID).sort("created_at", -1).to_list(6)
 
+    # Real driver presence — never derived from employment_status or the
+    # simulated GPS loop, only from login/heartbeat + real route status.
+    drivers = await db.drivers.find(tq, NO_ID).to_list(2000)
+    await annotate_driver_activity(user, drivers)
+    active_drivers = [d for d in drivers if d["activity_status"] != "offline"]
+    # Specifically "on_route" — the same source of truth (annotate_driver_
+    # activity) the painel's MOTORISTAS list and the live map already use to
+    # decide EM ROTA / who gets a map marker. active_drivers above mixes in
+    # "online" too (present in the app, no route) — kept as-is since it's
+    # asserted on directly in tests/test_activity.py, but it must never be
+    # what a "X motoristas em rota" KPI reads from.
+    drivers_on_route = len([d for d in drivers if d["activity_status"] == "on_route"])
+
+    # Presence list for the painel's MOTORISTAS section — distinct from
+    # active_drivers above (which only feeds the "active_drivers" KPI count).
+    # Includes OFFLINE drivers too (so "was active earlier today" stays
+    # visible), as long as they have ever sent a heartbeat; a driver who has
+    # never opened the app has nothing useful to show and is left out.
+    # Never capped — presence has nothing to do with GPS/privacy, it's just
+    # "who has the app open", so there is no reason to hide anyone here.
+    presence_drivers = [d for d in drivers if d.get("last_seen_at")]
+    STATUS_RANK = {"on_route": 0, "online": 1, "offline": 2}
+    # Two-pass stable sort: most-recent last_seen_at first WITHIN each status
+    # group, groups ordered on_route -> online -> offline.
+    presence_drivers.sort(key=lambda d: d.get("last_seen_at") or "", reverse=True)
+    presence_drivers.sort(key=lambda d: STATUS_RANK.get(d["activity_status"], 3))
+
     return {
         "kpis": {
             "active_trucks": active_trucks,
@@ -59,11 +87,22 @@ async def dashboard(user: dict = Depends(current_user)):
             "failed": failed,
             "overdue": overdue,
             "active_incidents": active_incidents,
+            "active_drivers": len(active_drivers),
+            "drivers_on_route": drivers_on_route,
         },
         "active_routes": active_routes,
         "delayed_routes": delayed_routes,
         "pending": pending,
         "recent_incidents": recent_incidents,
+        "active_drivers_list": [
+            {
+                "id": d["id"], "name": d["name"], "activity_status": d["activity_status"],
+                "current_route_code": d.get("current_route_code"),
+                "current_vehicle_plate": d.get("current_vehicle_plate"),
+                "last_seen_at": d.get("last_seen_at"),
+            }
+            for d in presence_drivers
+        ],
         "alerts": await _smart_alerts(user, routes, tasks),
     }
 

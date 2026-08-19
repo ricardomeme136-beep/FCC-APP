@@ -87,6 +87,22 @@ class TestGPS:
         assert moved, "GPS positions did not change (simulation loop stalled?)"
 
 
+# ---------- Reverse geocoding ----------
+class TestGeocode:
+    def test_reverse_requires_auth(self):
+        r = requests.get(f"{API}/geocode/reverse?lat=41.28&lng=-8.28", timeout=10)
+        assert r.status_code in (401, 403)
+
+    def test_reverse_returns_address_shape(self, h_admin_fcc):
+        # Real network call to Nominatim — tolerant of it being unreachable
+        # (never a hard failure of this endpoint's own contract), but the
+        # shape and auth must always hold.
+        r = requests.get(f"{API}/geocode/reverse?lat=38.7169&lng=-9.1399",
+                         headers=h_admin_fcc, timeout=15)
+        assert r.status_code == 200, r.text
+        assert "address" in r.json()
+
+
 # ---------- Containers ----------
 class TestContainers:
     def test_list_and_filter(self, h_admin_fcc):

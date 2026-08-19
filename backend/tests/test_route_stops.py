@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 
 import requests
-from conftest import API
+from conftest import API, PASSWORD
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from services.stops import cluster_into_stops
@@ -379,12 +379,15 @@ class TestStopEditing:
         g = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
         assert g.status_code == 404
 
-    def test_delete_route_blocked_when_task_collected(self, h_admin_fcc):
+    def test_delete_route_requires_password_when_task_collected(self, h_admin_fcc):
+        # Fase UI/SEC 1 superseded the old hard-block (409, no way through) —
+        # a route with real work now archives instead of being permanently
+        # blocked, but only after the caller re-confirms their password.
         route, _ = self._make_route_with_two_stops(h_admin_fcc, "2026-02-11")
         task_id = route["tasks"][0]["id"]
         _run_async(_direct_db().collection_tasks.update_one({"id": task_id}, {"$set": {"status": "collected"}}))
         r = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
-        assert r.status_code == 409
+        assert r.status_code == 400
 
 
 # ---------- Fase B: editing an old route backfills real stops on demand ----------
@@ -496,6 +499,59 @@ class TestManualRouteBuilder:
         assert all(len(s["tasks"]) == 0 for s in detail["stops"])
         assert [s["address"] for s in detail["stops"]] == ["TEST_Ponto A", "TEST_Ponto B"]
 
+    def test_manual_route_with_containers_creates_real_tasks_in_selection_order(self, h_admin_fcc):
+        depots = requests.get(f"{API}/depots", headers=h_admin_fcc, timeout=15).json()
+        depot = depots[0]
+        c1 = requests.post(f"{API}/containers", headers=h_admin_fcc, json={
+            "address": "TEST_Container Um", "lat": depot["lat"] + 0.01, "lng": depot["lng"] + 0.01,
+            "waste_type": "paper",
+        }, timeout=15).json()
+        c2 = requests.post(f"{API}/containers", headers=h_admin_fcc, json={
+            "address": "TEST_Container Dois", "lat": depot["lat"] + 0.02, "lng": depot["lng"] + 0.02,
+            "waste_type": "glass",
+        }, timeout=15).json()
+
+        # Selected in reverse order on purpose — the route must preserve
+        # exactly this order, never re-sort/optimize it.
+        body = {
+            "date": "2026-03-06",
+            "start": {"depot_id": depot["id"]},
+            "stops": [
+                {"lat": c2["lat"], "lng": c2["lng"], "address": c2["address"], "container_id": c2["id"]},
+                {"lat": c1["lat"], "lng": c1["lng"], "address": c1["address"], "container_id": c1["id"]},
+            ],
+        }
+        r = requests.post(f"{API}/routes/manual", headers=h_admin_fcc, json=body, timeout=30)
+        assert r.status_code == 200, r.text
+        route = r.json()
+        assert route["num_stops"] == 2
+
+        detail = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15).json()
+        assert len(detail["stops"]) == 2
+        assert [s["tasks"][0]["container_id"] for s in detail["stops"]] == [c2["id"], c1["id"]]
+        assert all(len(s["tasks"]) == 1 for s in detail["stops"])
+        assert detail["stops"][0]["tasks"][0]["waste_type"] == "glass"
+        assert len(detail["tasks"]) == 2
+
+    def test_manual_route_rejects_container_already_scheduled_same_day(self, h_admin_fcc):
+        depots = requests.get(f"{API}/depots", headers=h_admin_fcc, timeout=15).json()
+        depot = depots[0]
+        c = requests.post(f"{API}/containers", headers=h_admin_fcc, json={
+            "address": "TEST_AlreadyScheduled", "lat": depot["lat"] + 0.01, "lng": depot["lng"] + 0.01,
+            "waste_type": "general",
+        }, timeout=15).json()
+        body = {
+            "date": "2026-03-07",
+            "start": {"depot_id": depot["id"]},
+            "stops": [{"lat": c["lat"], "lng": c["lng"], "address": c["address"], "container_id": c["id"]}],
+        }
+        first = requests.post(f"{API}/routes/manual", headers=h_admin_fcc, json=body, timeout=30)
+        assert first.status_code == 200, first.text
+
+        second = requests.post(f"{API}/routes/manual", headers=h_admin_fcc, json=body, timeout=30)
+        assert second.status_code == 400
+        assert c["qr_code"] in second.json()["detail"]
+
     def test_manual_route_with_free_point_start_and_end(self, h_admin_fcc):
         body = {
             "date": "2026-03-02",
@@ -549,6 +605,46 @@ class TestManualRouteBuilder:
         removed = requests.delete(f"{API}/routes/{route['id']}/stops/{stop_ids[0]}",
                                   headers=h_admin_fcc, timeout=15)
         assert removed.status_code == 200, removed.text
+
+    def test_driver_can_find_started_manual_route_with_zero_tasks(self, h_admin_fcc):
+        """Regression test for the 'CONTINUAR ROTA -> Sem paragens pendentes'
+        bug: a route drawn on the map (zero collection_tasks, since no
+        containers were ever attached to any stop) must still show up for
+        its driver via GET /routes with status=in_progress once started —
+        the driver app must never rely on collection_tasks existing to find
+        the active route."""
+        driver, headers = TestRouteAssignment._make_driver_with_login(self, h_admin_fcc)
+        depots = requests.get(f"{API}/depots", headers=h_admin_fcc, timeout=15).json()
+        depot = depots[0]
+        body = {
+            "date": "2026-03-05",
+            "start": {"depot_id": depot["id"]},
+            "stops": [{"lat": depot["lat"] + 0.01, "lng": depot["lng"] + 0.01, "address": "TEST_NoContainers"}
+                      for _ in range(3)],
+            "driver_id": driver["id"],
+        }
+        r = requests.post(f"{API}/routes/manual", headers=h_admin_fcc, json=body, timeout=30)
+        assert r.status_code == 200, r.text
+        route = r.json()
+        assert route["num_stops"] == 0  # zero collection_tasks, by design (B2.2 not built)
+
+        start = requests.post(f"{API}/routes/{route['id']}/start", headers=headers, timeout=15)
+        assert start.status_code == 200, start.text
+
+        mine = requests.get(f"{API}/routes", headers=headers, timeout=15).json()
+        active = next((r for r in mine if r["id"] == route["id"]), None)
+        assert active is not None, "driver must be able to find their own started route via GET /routes"
+        assert active["status"] == "in_progress"
+
+        detail = requests.get(f"{API}/routes/{route['id']}", headers=headers, timeout=15).json()
+        assert len(detail["stops"]) == 3
+        assert all(s["tasks"] == [] for s in detail["stops"])
+
+        # nothing to collect -> finishing must still work cleanly
+        finish = requests.post(f"{API}/routes/{route['id']}/finish", headers=headers, timeout=15)
+        assert finish.status_code == 200, finish.text
+        assert finish.json()["collected_count"] == 0
+        assert finish.json()["pending_count"] == 0
 
 
 # ---------- Fase PROD2: assign/reassign driver and vehicle on a route ----------
@@ -805,3 +901,94 @@ class TestRouteFinish:
         vehicles = requests.get(f"{API}/vehicles", headers=h_admin_fcc, timeout=15).json()
         updated_vehicle = next(v for v in vehicles if v["id"] == vehicle["id"])
         assert updated_vehicle["status"] == "available"
+
+
+class TestRouteDeletion:
+    """Fase UI/SEC 1 — DELETE /routes/{rid}: trivial discard (no password,
+    any management role) stays exactly as before; a route with real work or
+    that was ever started requires a re-typed admin password and archives
+    (status -> cancelled) instead of hard-deleting."""
+
+    _make_driver_with_login = TestRouteAssignment._make_driver_with_login
+    _make_route = TestRouteAssignment._make_route
+
+    def test_trivial_discard_still_works_without_password(self, h_admin_fcc):
+        route, _ = self._make_route(h_admin_fcc, "2026-07-01")
+        r = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["action"] == "delete"
+        gone = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
+        assert gone.status_code == 404
+
+    def test_started_route_requires_password_and_archives(self, h_admin_fcc):
+        route, _ = self._make_route(h_admin_fcc, "2026-07-02")
+        start = requests.post(f"{API}/routes/{route['id']}/start", headers=h_admin_fcc, timeout=15)
+        assert start.status_code == 200, start.text
+
+        no_pw = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
+        assert no_pw.status_code == 400
+
+        wrong_pw = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc,
+                                   json={"password": "not-the-password"}, timeout=15)
+        assert wrong_pw.status_code == 401
+        still_there = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
+        assert still_there.status_code == 200
+        assert still_there.json()["status"] == "in_progress"  # untouched by the failed attempt
+
+        ok = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc,
+                             json={"password": PASSWORD}, timeout=15)
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["action"] == "archive"
+        archived = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15)
+        assert archived.status_code == 200
+        assert archived.json()["status"] == "cancelled"
+
+    def test_route_with_collected_task_archives_and_keeps_history(self, h_admin_fcc):
+        route, _ = self._make_route(h_admin_fcc, "2026-07-03")
+        requests.post(f"{API}/routes/{route['id']}/start", headers=h_admin_fcc, timeout=15)
+        detail = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15).json()
+        task = detail["tasks"][0]
+        complete = requests.post(f"{API}/collection-tasks/{task['id']}/complete", headers=h_admin_fcc,
+                                 json={"lat": task["lat"], "lng": task["lng"]}, timeout=15)
+        assert complete.status_code == 200, complete.text
+
+        r = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc,
+                            json={"password": PASSWORD}, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["action"] == "archive"
+
+        after = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15).json()
+        assert after["status"] == "cancelled"
+        completed_task = next(t for t in after["tasks"] if t["id"] == task["id"])
+        assert completed_task["status"] == "collected"  # history preserved, never deleted
+
+    def test_audit_log_message_format(self, h_admin_fcc):
+        route, _ = self._make_route(h_admin_fcc, "2026-07-04")
+        requests.post(f"{API}/routes/{route['id']}/start", headers=h_admin_fcc, timeout=15)
+        r = requests.delete(f"{API}/routes/{route['id']}", headers=h_admin_fcc,
+                            json={"password": PASSWORD}, timeout=15)
+        assert r.status_code == 200, r.text
+
+        logs = requests.get(f"{API}/audit-logs", headers=h_admin_fcc, timeout=15).json()
+        entry = next((l for l in logs if l["entity_id"] == route["id"] and l["action"] == "archive"), None)
+        assert entry is not None
+        assert f"arquivou a Rota {route['code']}" in entry["new_value"]["message"]
+
+    def test_dispatcher_cannot_delete_started_route(self, h_admin_fcc, dispatcher_fcc):
+        h_dispatcher = {"Authorization": f"Bearer {dispatcher_fcc['access_token']}"}
+        route, _ = self._make_route(h_admin_fcc, "2026-07-05")
+        requests.post(f"{API}/routes/{route['id']}/start", headers=h_admin_fcc, timeout=15)
+
+        r = requests.delete(f"{API}/routes/{route['id']}", headers=h_dispatcher,
+                            json={"password": PASSWORD}, timeout=15)
+        assert r.status_code == 403
+
+        untouched = requests.get(f"{API}/routes/{route['id']}", headers=h_admin_fcc, timeout=15).json()
+        assert untouched["status"] == "in_progress"
+
+    def test_dispatcher_can_still_discard_trivial_route(self, h_admin_fcc, dispatcher_fcc):
+        h_dispatcher = {"Authorization": f"Bearer {dispatcher_fcc['access_token']}"}
+        route, _ = self._make_route(h_admin_fcc, "2026-07-06")
+        r = requests.delete(f"{API}/routes/{route['id']}", headers=h_dispatcher, timeout=15)
+        assert r.status_code == 200, r.text
+        assert r.json()["action"] == "delete"

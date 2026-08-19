@@ -1,23 +1,31 @@
 import { Redirect, Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { BottomTabBar } from "@react-navigation/bottom-tabs";
 import { useAuth } from "@/src/auth/AuthContext";
 import { colors, fonts, border } from "@/src/theme";
 import { Loading } from "@/src/components/ui";
+import Sidebar from "@/src/components/Sidebar";
 
 const MANAGEMENT = ["super_admin", "company_admin", "dispatcher", "operations_manager", "maintenance_manager"];
+const DESKTOP_BREAKPOINT = 768;
 
 export default function ManagerLayout() {
   const { user, loading } = useAuth();
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
   if (loading) return <Loading />;
   if (!user) return <Redirect href="/login" />;
   if (!MANAGEMENT.includes(user.role)) return <Redirect href="/" />;
 
   return (
     <Tabs
+      tabBar={(props) => (isDesktop ? <Sidebar {...props} /> : <BottomTabBar {...props} />)}
       screenOptions={{
         headerShown: false,
+        tabBarPosition: isDesktop ? "left" : "bottom",
         tabBarActiveTintColor: colors.brand,
         tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {

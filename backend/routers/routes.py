@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from core.db import db, NO_ID
 from core.models import (OptimizeIn, StopReorderIn, StopMoveIn, StopCreateIn,
                          PreviewGeometryIn, PreviewOptimizeIn, ManualRouteIn,
-                         RouteAssignmentIn, RouteStartIn, RouteFinishIn)
-from core.security import current_user, require_roles, tenant_query, write_audit, MANAGEMENT_ROLES
+                         RouteAssignmentIn, RouteStartIn, RouteFinishIn, RouteDeleteIn)
+from core.security import current_user, require_roles, tenant_query, write_audit, verify_password, MANAGEMENT_ROLES
 from services.optimizer import generate_routes, optimize_single, _route_distance, AVG_SPEED_KMH, SERVICE_MIN_PER_STOP
 from services.routing import road_route
 from services.stops import cluster_into_stops
@@ -231,6 +231,13 @@ async def optimize(body: OptimizeIn, request: Request,
     if not containers:
         raise HTTPException(400, "Sem contentores para otimizar com estes filtros")
 
+    # Explicit container_ids bypasses the status="active" filter above — an
+    # archived container must still never end up on a new route.
+    if body.container_ids:
+        archived = sorted({c.get("qr_code", c["id"]) for c in containers if c.get("status") != "active"})
+        if archived:
+            raise HTTPException(400, f"Contentor(es) arquivado(s), não podem ser usados: {', '.join(archived)}")
+
     # Don't double-book a container that already has a pending pickup that day.
     dup_tasks = await db.collection_tasks.find(
         tenant_query(user, {"container_id": {"$in": [c["id"] for c in containers]},
@@ -243,11 +250,11 @@ async def optimize(body: OptimizeIn, request: Request,
     if not containers:
         raise HTTPException(400, "Todos os contentores selecionados já têm recolhas agendadas para esta data.")
 
-    depots = await db.depots.find(tenant_query(user), NO_ID).to_list(10)
+    depots = await db.depots.find(tenant_query(user), NO_ID).to_list(500)
     facilities = await db.facilities.find(tenant_query(user), NO_ID).to_list(20)
     if not depots:
         raise HTTPException(400, "Nenhum depósito configurado")
-    depot_doc = depots[0]
+    depot_doc = next((d for d in depots if d.get("is_primary")), depots[0])
     if body.depot_id:
         depot_doc = next((d for d in depots if d["id"] == body.depot_id), None)
         if not depot_doc:
@@ -627,21 +634,55 @@ async def remove_stop(rid: str, sid: str, request: Request,
 
 
 @router.delete("/routes/{rid}")
-async def delete_route(rid: str, request: Request,
-                       user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
-    """Discard an entire route — used to undo a just-generated batch the
-    admin doesn't want (see the preview screen), or to clear an empty/wrong
-    scheduled route. Blocked once any task has real-world outcome recorded."""
+async def delete_route(rid: str, request: Request, body: Optional[RouteDeleteIn] = None,
+                       user: dict = Depends(current_user)):
+    """Discard a route. Two paths share this one endpoint on purpose:
+
+    1. Trivial discard — undo a just-generated batch the admin/dispatcher
+       hasn't left the preview screen for yet, or clear an empty/wrong
+       scheduled route. No real work recorded, route never started: no
+       password needed, any management role may do it (unchanged from
+       before Fase UI/SEC 1).
+    2. Sensitive delete/archive (Fase UI/SEC 1) — a route with any
+       collected/failed task, or that was already started, is never
+       hard-deleted; it's archived instead (status -> cancelled), keeping
+       every task/stop/GPS record as proof of real work. This path requires
+       the caller to re-type their own password (verified server-side —
+       current_user() deliberately excludes password_hash, so this does a
+       fresh lookup) and is restricted to company_admin/super_admin —
+       dispatcher can never delete or archive a route with real history."""
+    if user["role"] not in MANAGEMENT_ROLES:
+        raise HTTPException(403, "Sem permissão para eliminar rotas")
+
     route = await db.routes.find_one(tenant_query(user, {"id": rid}), NO_ID)
     if not route:
         raise HTTPException(404, "Rota não encontrada")
-    tasks = await db.collection_tasks.find(tenant_query(user, {"route_id": rid}), NO_ID).to_list(2000)
-    if any(t["status"] in ("collected", "failed") for t in tasks):
-        raise HTTPException(409, "Não é possível apagar: a rota já tem recolhas concluídas ou falhadas.")
 
-    await db.collection_tasks.delete_many(tenant_query(user, {"route_id": rid}))
-    await db.route_stops.delete_many(tenant_query(user, {"route_id": rid}))
-    await db.routes.delete_one(tenant_query(user, {"id": rid}))
+    tasks = await db.collection_tasks.find(tenant_query(user, {"route_id": rid}), NO_ID).to_list(2000)
+    has_real_work = any(t["status"] in ("collected", "failed") for t in tasks)
+    already_started = route.get("status") == "in_progress"
+    needs_confirmation = has_real_work or already_started
+
+    if needs_confirmation and user["role"] not in ("super_admin", "company_admin"):
+        raise HTTPException(403, "Só administradores podem eliminar ou arquivar uma rota com histórico")
+
+    if body and body.password:
+        full_user = await db.users.find_one({"id": user["id"]}, NO_ID)
+        if not full_user or not verify_password(body.password, full_user["password_hash"]):
+            raise HTTPException(401, "Password incorreta")
+    elif needs_confirmation:
+        raise HTTPException(400, "Esta rota já tem histórico — confirme a sua password para continuar")
+
+    admin_name = user.get("name") or "Um administrador"
+
+    if needs_confirmation:
+        await db.routes.update_one(tenant_query(user, {"id": rid}), {"$set": {"status": "cancelled"}})
+        action, message = "archive", f"{admin_name} arquivou a Rota {route.get('code')}."
+    else:
+        await db.collection_tasks.delete_many(tenant_query(user, {"route_id": rid}))
+        await db.route_stops.delete_many(tenant_query(user, {"route_id": rid}))
+        await db.routes.delete_one(tenant_query(user, {"id": rid}))
+        action, message = "delete", f"{admin_name} eliminou a Rota {route.get('code')}."
 
     if route.get("vehicle_id"):
         await db.vehicles.update_one(tenant_query(user, {"id": route["vehicle_id"]}),
@@ -650,8 +691,10 @@ async def delete_route(rid: str, request: Request,
         await db.drivers.update_one(tenant_query(user, {"id": route["driver_id"]}),
                                     {"$set": {"status": "available"}})
 
-    await write_audit(user, "delete", "route", rid, request, old={"code": route.get("code")})
-    return {"ok": True}
+    await write_audit(user, action, "route", rid, request,
+                      old={"code": route.get("code"), "status": route.get("status")},
+                      new={"message": message})
+    return {"ok": True, "action": action}
 
 
 @router.post("/routes/preview-geometry")
@@ -694,6 +737,31 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
     if not body.stops:
         raise HTTPException(400, "Defina pelo menos uma paragem")
 
+    # Stops built from real containers (selected from a list, not tapped
+    # blank on the map) get a real collection_task each, so the driver app
+    # has something to act on — closes the "20 paragens, 0 contentores" gap.
+    container_ids = [s.container_id for s in body.stops if s.container_id]
+    containers_by_id: dict = {}
+    if container_ids:
+        found = await db.containers.find(
+            tenant_query(user, {"id": {"$in": container_ids}}), NO_ID).to_list(5000)
+        containers_by_id = {c["id"]: c for c in found}
+        missing = set(container_ids) - set(containers_by_id)
+        if missing:
+            raise HTTPException(400, f"{len(missing)} contentor(es) selecionado(s) não foram encontrados")
+        archived = sorted({c["qr_code"] for c in containers_by_id.values() if c.get("status") != "active"})
+        if archived:
+            raise HTTPException(400, f"Contentor(es) arquivado(s), não podem ser usados: {', '.join(archived)}")
+
+        dup_tasks = await db.collection_tasks.find(
+            tenant_query(user, {"container_id": {"$in": container_ids}, "scheduled_date": body.date,
+                                "status": {"$in": ["scheduled", "en_route", "arrived"]}}),
+            NO_ID).to_list(5000)
+        if dup_tasks:
+            names = sorted({containers_by_id[t["container_id"]]["qr_code"] for t in dup_tasks
+                            if t["container_id"] in containers_by_id})
+            raise HTTPException(400, f"Já têm recolha agendada para esta data: {', '.join(names)}")
+
     start_depot = None
     start_lat = start_lng = None
     if body.start.depot_id:
@@ -704,7 +772,13 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
     elif body.start.lat is not None and body.start.lng is not None:
         start_lat, start_lng = body.start.lat, body.start.lng
     else:
-        raise HTTPException(400, "Defina o ponto de início")
+        # No explicit start — fall back to the company's primary depot
+        # instead of failing, so the admin never has to pick it manually.
+        depots = await db.depots.find(tenant_query(user), NO_ID).to_list(500)
+        start_depot = next((d for d in depots if d.get("is_primary")), depots[0] if depots else None)
+        if not start_depot:
+            raise HTTPException(400, "Defina o ponto de início")
+        start_lat, start_lng = start_depot["lat"], start_depot["lng"]
 
     end = body.end
     end_facility = None
@@ -753,7 +827,7 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
         "end_facility_id": end_facility["id"] if end_facility else None,
         "end_lat": None if end_facility else end_lat,
         "end_lng": None if end_facility else end_lng,
-        "waste_type": None, "num_stops": 0,
+        "waste_type": None, "num_stops": len(container_ids),
         "distance_km": dist_km, "duration_min": duration_min,
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
@@ -762,12 +836,32 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
     }
     await db.routes.insert_one(route_doc)
 
+    task_seq = 0
     for i, s in enumerate(body.stops):
         stop_id = _stop_id(rid, i)
+        task_ids = []
+        waste_types = []
+        if s.container_id:
+            c = containers_by_id[s.container_id]
+            task_seq += 1
+            tid = str(uuid.uuid4())
+            task_ids.append(tid)
+            waste_types.append(c["waste_type"])
+            await db.collection_tasks.insert_one({
+                "id": tid, "company_id": company_id,
+                "route_id": rid, "container_id": c["id"], "stop_id": stop_id,
+                "driver_id": driver["id"] if driver else None,
+                "vehicle_id": vehicle["id"] if vehicle else None,
+                "sequence": task_seq, "waste_type": c["waste_type"],
+                "address": s.address or c.get("address", ""), "lat": s.lat, "lng": s.lng,
+                "status": "scheduled", "scheduled_date": body.date,
+                "load_kg": None, "arrived_at": None, "completed_at": None,
+                "gps": None, "photo_url": None, "notes": "", "fail_reason": None,
+            })
         await db.route_stops.insert_one({
             "id": stop_id, "company_id": company_id, "route_id": rid,
             "sequence": i + 1, "lat": s.lat, "lng": s.lng, "address": s.address,
-            "waste_types": [], "task_ids": [], "created_at": now_iso(),
+            "waste_types": waste_types, "task_ids": task_ids, "created_at": now_iso(),
         })
 
     if vehicle:

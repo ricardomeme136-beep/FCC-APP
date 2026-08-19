@@ -1,22 +1,31 @@
 import { useCallback, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
+import { useAuth } from "@/src/auth/AuthContext";
 import { ScreenHeader } from "@/src/components/Header";
 import { Btn, Loading, Txt, useToast } from "@/src/components/ui";
 import FleetMap from "@/src/components/FleetMap";
 import ContainerPicker from "@/src/components/ContainerPicker";
-import { colors, spacing, border, routeStatus, taskStatus, wasteLabels } from "@/src/theme";
+import { colors, spacing, border, radius, routeStatus, taskStatus, wasteLabels } from "@/src/theme";
+
+const ADMIN_ROLES = ["super_admin", "company_admin"];
 
 export default function RouteDetail() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const toast = useToast();
+  const { user } = useAuth();
   const [route, setRoute] = useState<any | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [deleteWarnOpen, setDeleteWarnOpen] = useState(false);
+  const [deletePasswordOpen, setDeletePasswordOpen] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [geo, setGeo] = useState<any | null>(null);
   const [vehicles, setVehicles] = useState<any[]>([]);
   const [drivers, setDrivers] = useState<any[]>([]);
@@ -110,6 +119,22 @@ export default function RouteDetail() {
     act(() => api.patch(`/routes/${id}/assignment`, { vehicle_id: vehicleId }), "Viatura atualizada");
   };
 
+  const confirmDelete = async () => {
+    if (!deletePassword) { toast("Introduza a password", "error"); return; }
+    setDeleting(true);
+    try {
+      const res = await api.del<{ action: "delete" | "archive" }>(`/routes/${id}`, { password: deletePassword });
+      setDeletePasswordOpen(false);
+      setDeletePassword("");
+      toast(res.action === "archive" ? "Rota arquivada" : "Rota eliminada", "success");
+      router.back();
+    } catch (e: any) {
+      toast(e?.message || "Erro ao eliminar", "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const driverAvailability = (d: any) => {
     if (d.employment_status && d.employment_status !== "ativo") {
       return { label: "INDISPONÍVEL", color: colors.error };
@@ -129,9 +154,23 @@ export default function RouteDetail() {
 
   return (
     <View style={styles.flex}>
-      <ScreenHeader title={route.code} subtitle={st.label} back />
+      <ScreenHeader title={route.code} subtitle={st.label} back right={
+        <Pressable testID="route-actions-menu" onPress={() => setActionsOpen(true)} hitSlop={10} style={styles.headerIconBtn}>
+          <Ionicons name="ellipsis-horizontal" size={22} color={colors.onSurface} />
+        </Pressable>
+      } />
       <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={styles.mapBox}><FleetMap markers={markers} polylines={[{ coordinates: line, color: colors.brand, width: 4 }]} /></View>
+        <View style={styles.mapBox}>
+          <FleetMap markers={markers} polylines={[{ coordinates: line, color: colors.brand, width: 4 }]} />
+          {geo?.provider === "straight" && (
+            <View testID="route-straight-line-warning" style={styles.strawBanner}>
+              <Ionicons name="construct" size={13} color="#fff" />
+              <Txt variant="mono" color="#fff" numberOfLines={2} style={{ flex: 1, fontSize: 10 }}>
+                MODO DESENVOLVIMENTO — linha reta (falta ORS_API_KEY no backend)
+              </Txt>
+            </View>
+          )}
+        </View>
 
         <View style={styles.assignRow}>
           <Pressable testID="change-driver" style={styles.assignChip} onPress={() => setAssignFor("driver")}>
@@ -232,7 +271,7 @@ export default function RouteDetail() {
             </Pressable>
           } />
           <ScrollView contentContainerStyle={styles.scroll}>
-            <ContainerPicker value={addSelection} onChange={setAddSelection} />
+            <ContainerPicker value={addSelection} onChange={setAddSelection} forDate={route.date} />
             <Btn testID="confirm-add-stop" title="CONFIRMAR" onPress={confirmAdd} disabled={!addSelection.length} />
           </ScrollView>
         </View>
@@ -292,6 +331,67 @@ export default function RouteDetail() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal visible={actionsOpen} transparent animationType="slide" onRequestClose={() => setActionsOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setActionsOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
+            <Txt variant="displaySm">AÇÕES</Txt>
+            {user && ADMIN_ROLES.includes(user.role) ? (
+              <Pressable testID="open-delete-route" style={styles.reason} onPress={() => { setActionsOpen(false); setDeleteWarnOpen(true); }}>
+                <Txt variant="monoBold" color={colors.error}>Eliminar rota</Txt>
+                <Ionicons name="trash-outline" size={18} color={colors.error} />
+              </Pressable>
+            ) : (
+              <Txt variant="mono" color={colors.muted} style={{ paddingVertical: spacing.md }}>
+                Só administradores podem eliminar rotas.
+              </Txt>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={deleteWarnOpen} transparent animationType="fade" onRequestClose={() => setDeleteWarnOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDeleteWarnOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
+            <Txt variant="displaySm">Tem a certeza de que pretende eliminar esta rota?</Txt>
+            <Txt variant="mono" color={colors.muted} style={{ marginTop: spacing.sm }}>
+              Esta ação pode remover a rota e as tarefas ainda não executadas associadas. Esta operação não pode ser anulada.
+            </Txt>
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <Btn testID="cancel-delete-route" title="CANCELAR" variant="outline" style={{ flex: 1 }} onPress={() => setDeleteWarnOpen(false)} />
+              <Btn testID="continue-delete-route" title="CONTINUAR" variant="error" style={{ flex: 1 }}
+                onPress={() => { setDeleteWarnOpen(false); setDeletePasswordOpen(true); }} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={deletePasswordOpen} transparent animationType="fade" onRequestClose={() => setDeletePasswordOpen(false)}>
+        <Pressable style={styles.backdrop} onPress={() => setDeletePasswordOpen(false)}>
+          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
+            <Txt variant="displaySm">Confirmar identidade</Txt>
+            <Txt variant="mono" color={colors.muted} style={{ marginTop: spacing.sm }}>
+              Introduza a palavra-passe de administrador para eliminar esta rota.
+            </Txt>
+            <TextInput
+              testID="delete-route-password-input"
+              style={styles.passwordInput}
+              value={deletePassword}
+              onChangeText={setDeletePassword}
+              secureTextEntry
+              placeholder="Password"
+              placeholderTextColor={colors.muted}
+              autoFocus
+            />
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <Btn testID="cancel-delete-password" title="CANCELAR" variant="outline" style={{ flex: 1 }}
+                onPress={() => { setDeletePasswordOpen(false); setDeletePassword(""); }} />
+              <Btn testID="confirm-delete-route" title="CONFIRMAR E ELIMINAR" variant="error" style={{ flex: 1 }}
+                loading={deleting} onPress={confirmDelete} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -303,7 +403,11 @@ function Cell({ label, value }: { label: string; value: any }) {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  mapBox: { height: 200, borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
+  mapBox: { height: 200, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, overflow: "hidden" },
+  strawBanner: {
+    position: "absolute", top: spacing.sm, left: spacing.sm, right: spacing.sm, flexDirection: "row", alignItems: "center",
+    gap: spacing.xs, backgroundColor: colors.warning, borderRadius: radius.sm, padding: spacing.xs,
+  },
   assignRow: { flexDirection: "row", gap: spacing.sm },
   assignChip: { flexDirection: "row", alignItems: "center", gap: 6, borderWidth: border.width, borderColor: colors.border, borderRadius: 12, paddingHorizontal: spacing.sm, paddingVertical: 4 },
   statsRow: { flexDirection: "row", borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
@@ -321,4 +425,10 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
   sheet: { backgroundColor: colors.surface, borderTopWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg },
   reason: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.md },
+  headerIconBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
+  passwordInput: {
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.sm,
+    paddingHorizontal: spacing.md, height: 46, fontFamily: "SpaceGrotesk-Regular",
+    fontSize: 14, color: colors.onSurface, backgroundColor: colors.bg, marginTop: spacing.md,
+  },
 });

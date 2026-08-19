@@ -26,7 +26,7 @@ COLLECTIONS = [
     "users", "drivers", "vehicles", "containers", "routes",
     "collection_tasks", "collections", "incidents", "depots", "facilities",
     "customers", "zones", "gps_positions", "notifications", "audit_logs",
-    "ai_conversations",
+    "ai_conversations", "tracking_sessions",
 ]
 
 

@@ -1,16 +1,19 @@
 """CRUD endpoints for core entities (tenant-scoped)."""
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from pymongo.errors import DuplicateKeyError
 
 from core.db import db, NO_ID
-from core.models import (VehicleIn, DriverIn, ContainerIn, ContainerUpdate,
-                         DepotIn, FacilityIn, CustomerIn, PasswordResetIn)
+from core.models import (VehicleIn, DriverIn, ContainerIn, ContainerUpdate, ContainerDeleteIn,
+                         DepotIn, FacilityIn, CustomerIn, PasswordResetIn, HeartbeatIn)
 from core.security import (current_user, require_roles, tenant_query, write_audit,
-                           hash_password, MANAGEMENT_ROLES)
+                           hash_password, verify_password, MANAGEMENT_ROLES)
+from core.activity import annotate_driver_activity
+from services.geo import haversine
 
 router = APIRouter(tags=["entities"])
 
@@ -88,7 +91,26 @@ async def update_vehicle(vid: str, body: VehicleIn, request: Request,
 # ---------------- Drivers ----------------
 @router.get("/drivers")
 async def list_drivers(user: dict = Depends(current_user)):
-    return await db.drivers.find(tenant_query(user), NO_ID).to_list(2000)
+    drivers = await db.drivers.find(tenant_query(user), NO_ID).to_list(2000)
+    return await annotate_driver_activity(user, drivers)
+
+
+@router.post("/drivers/me/heartbeat")
+async def driver_heartbeat(body: Optional[HeartbeatIn] = None,
+                           user: dict = Depends(current_user)):
+    """Lightweight presence signal — the driver app calls this every 30-60s
+    while open. Only ever touches the authenticated user's own account: the
+    driver is resolved from the token, never from a client-supplied
+    driver_id, so a driver can never update someone else's presence."""
+    if not user.get("driver_id"):
+        raise HTTPException(403, "Esta conta não está associada a um motorista")
+    updates = {"last_seen_at": now_iso()}
+    if body and body.route_id:
+        updates["current_route_id"] = body.route_id
+    if body and body.vehicle_id:
+        updates["current_vehicle_id"] = body.vehicle_id
+    await db.users.update_one({"id": user["id"]}, {"$set": updates})
+    return {"ok": True}
 
 
 @router.get("/drivers/{did}")
@@ -96,6 +118,7 @@ async def get_driver(did: str, user: dict = Depends(current_user)):
     d = await db.drivers.find_one(tenant_query(user, {"id": did}), NO_ID)
     if not d:
         raise HTTPException(404, "Motorista não encontrado")
+    await annotate_driver_activity(user, [d])
     # performance from tasks
     tasks = await db.collection_tasks.find(
         tenant_query(user, {"driver_id": did}), NO_ID).to_list(5000)
@@ -231,12 +254,49 @@ async def reset_driver_password(did: str, body: PasswordResetIn, request: Reques
 
 
 # ---------------- Containers ----------------
+async def _annotate_availability(user: dict, containers: list, for_date: str) -> None:
+    """Mutates each container in place with `available`/`unavailable_reason`
+    for the given date — never silently drops a container from the response,
+    always explains why it can't be picked (Fase: contentores no criador de
+    rotas)."""
+    if not containers:
+        return
+    ids = [c["id"] for c in containers]
+    tasks = await db.collection_tasks.find(
+        tenant_query(user, {"container_id": {"$in": ids}, "scheduled_date": for_date,
+                            "status": {"$in": ["scheduled", "en_route", "arrived"]}}),
+        NO_ID).to_list(5000)
+    route_ids = list({t["route_id"] for t in tasks if t.get("route_id")})
+    routes_by_id = {}
+    if route_ids:
+        routes = await db.routes.find(tenant_query(user, {"id": {"$in": route_ids}}), NO_ID).to_list(2000)
+        routes_by_id = {r["id"]: r for r in routes}
+    route_by_container = {t["container_id"]: routes_by_id.get(t.get("route_id")) for t in tasks}
+
+    for c in containers:
+        has_gps = isinstance(c.get("lat"), (int, float)) and isinstance(c.get("lng"), (int, float))
+        route = route_by_container.get(c["id"])
+        if c.get("status") != "active":
+            c["available"] = False
+            c["unavailable_reason"] = "Arquivado" if c.get("status") == "archived" else "Inativo"
+        elif not has_gps:
+            c["available"] = False
+            c["unavailable_reason"] = "Sem localização GPS"
+        elif route:
+            c["available"] = False
+            c["unavailable_reason"] = f"Já atribuído à Rota {route.get('code')} nesta data"
+        else:
+            c["available"] = True
+            c["unavailable_reason"] = None
+
+
 @router.get("/containers")
 async def list_containers(
     user: dict = Depends(current_user),
     waste_type: str = Query(None),
     zone_id: str = Query(None),
     status: str = Query(None),
+    for_date: str = Query(None),
     limit: int = Query(2000),
 ):
     q = tenant_query(user)
@@ -248,7 +308,10 @@ async def list_containers(
         q["zone_id"] = zone_id
     if status:
         q["status"] = status
-    return await db.containers.find(q, NO_ID).to_list(limit)
+    containers = await db.containers.find(q, NO_ID).to_list(limit)
+    if for_date:
+        await _annotate_availability(user, containers, for_date)
+    return containers
 
 
 @router.get("/containers/{cid}")
@@ -294,20 +357,96 @@ async def update_container(cid: str, body: ContainerUpdate, request: Request,
     return await db.containers.find_one(tenant_query(user, {"id": cid}), NO_ID)
 
 
+@router.delete("/containers/{cid}")
+async def delete_container(cid: str, request: Request, body: Optional[ContainerDeleteIn] = None,
+                           user: dict = Depends(current_user)):
+    """Container with any real history (collection_tasks or incidents ever
+    referencing it — including still-pending ones on a future route) is
+    ARCHIVED, never hard-deleted, so past collection proof is never lost.
+    Only a container that was never used anywhere can be permanently
+    deleted, and only after the admin re-enters their password (verified
+    server-side, same pattern as DELETE /routes/{rid})."""
+    if user["role"] not in ("super_admin", "company_admin"):
+        raise HTTPException(403, "Só administradores podem eliminar ou arquivar um contentor")
+    c = await db.containers.find_one(tenant_query(user, {"id": cid}), NO_ID)
+    if not c:
+        raise HTTPException(404, "Contentor não encontrado")
+
+    has_tasks = await db.collection_tasks.count_documents(tenant_query(user, {"container_id": cid})) > 0
+    has_incidents = await db.incidents.count_documents(tenant_query(user, {"container_id": cid})) > 0
+    has_history = has_tasks or has_incidents
+
+    admin_name = user.get("name") or "Um administrador"
+    if has_history:
+        await db.containers.update_one(tenant_query(user, {"id": cid}), {"$set": {"status": "archived"}})
+        action = "archive"
+        message = f"{admin_name} arquivou o contentor {c.get('qr_code')}."
+    else:
+        if not body or not body.password:
+            raise HTTPException(400, "Confirme a sua password para eliminar permanentemente")
+        full_user = await db.users.find_one({"id": user["id"]}, NO_ID)
+        if not full_user or not verify_password(body.password, full_user["password_hash"]):
+            raise HTTPException(401, "Password incorreta")
+        await db.containers.delete_one(tenant_query(user, {"id": cid}))
+        action = "delete"
+        message = f"{admin_name} eliminou o contentor {c.get('qr_code')}."
+
+    await write_audit(user, action, "container", cid, request,
+                      old={"status": c.get("status")}, new={"message": message})
+    return {"ok": True, "action": action}
+
+
 # ---------------- Depots ----------------
 @router.get("/depots")
 async def list_depots(user: dict = Depends(current_user)):
     return await db.depots.find(tenant_query(user), NO_ID).to_list(500)
 
 
+@router.get("/depots/{did}")
+async def get_depot(did: str, user: dict = Depends(current_user)):
+    d = await db.depots.find_one(tenant_query(user, {"id": did}), NO_ID)
+    if not d:
+        raise HTTPException(404, "Depósito não encontrado")
+    today = now_iso()[:10]
+    d["routes_today"] = await db.routes.count_documents(
+        tenant_query(user, {"start_depot_id": did, "date": today}))
+    vehicles = await db.vehicles.find(tenant_query(user), NO_ID).to_list(2000)
+    vehicles_at_depot = 0
+    for v in vehicles:
+        pos = await db.gps_positions.find_one(
+            {"vehicle_id": v["id"]}, NO_ID, sort=[("timestamp", -1)])
+        if pos and haversine((pos["lat"], pos["lng"]), (d["lat"], d["lng"])) <= 0.3:
+            vehicles_at_depot += 1
+    d["vehicles_at_depot"] = vehicles_at_depot
+    return d
+
+
 @router.post("/depots")
 async def create_depot(body: DepotIn, request: Request,
                        user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
     doc = {"id": str(uuid.uuid4()), "company_id": user["company_id"], **body.dict()}
+    if doc["is_primary"]:
+        await db.depots.update_many(tenant_query(user), {"$set": {"is_primary": False}})
     await db.depots.insert_one(doc)
-    await write_audit(user, "create", "depot", doc["id"], request)
+    await write_audit(user, "create", "depot", doc["id"], request, new=body.dict())
     doc.pop("_id", None)
     return doc
+
+
+@router.patch("/depots/{did}")
+async def update_depot(did: str, body: DepotIn, request: Request,
+                       user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """A company has at most one primary depot: marking this one primary
+    unmarks every other depot in the same tenant in the same call."""
+    changes = body.dict()
+    if changes["is_primary"]:
+        await db.depots.update_many(
+            tenant_query(user, {"id": {"$ne": did}}), {"$set": {"is_primary": False}})
+    r = await db.depots.update_one(tenant_query(user, {"id": did}), {"$set": changes})
+    if not r.matched_count:
+        raise HTTPException(404, "Depósito não encontrado")
+    await write_audit(user, "update", "depot", did, request, new=changes)
+    return await db.depots.find_one(tenant_query(user, {"id": did}), NO_ID)
 
 
 # ---------------- Facilities ----------------

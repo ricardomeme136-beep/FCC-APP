@@ -5,7 +5,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { ScreenHeader } from "@/src/components/Header";
-import { Badge, Btn, Empty, Loading, Txt, useToast } from "@/src/components/ui";
+import { Badge, Btn, CompactCard, Empty, Loading, SearchInput, Txt, useToast } from "@/src/components/ui";
 import { colors, spacing, border, radius, vehicleStatus, wasteLabels } from "@/src/theme";
 
 const WASTE_TYPES = Object.keys(wasteLabels);
@@ -15,6 +15,7 @@ export default function Viaturas() {
   const [items, setItems] = useState<any[] | null>(null);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [plate, setPlate] = useState("");
   const [brand, setBrand] = useState("");
@@ -67,7 +68,7 @@ export default function Viaturas() {
       <ScreenHeader title="VIATURAS" subtitle={`${items.length} na frota`} back />
       <ScrollView contentContainerStyle={styles.scroll}>
         {!creating ? (
-          <Btn testID="start-create-vehicle" title="NOVA VIATURA" icon="add-circle" onPress={() => setCreating(true)} />
+          <Btn testID="start-create-vehicle" title="NOVA VIATURA" icon="add-circle" size="sm" onPress={() => setCreating(true)} />
         ) : (
           <View style={styles.form}>
             <View style={styles.formHead}>
@@ -99,29 +100,35 @@ export default function Viaturas() {
           </View>
         )}
 
+        {items.length > 0 && !creating && (
+          <SearchInput testID="search-vehicles" value={search} onChangeText={setSearch} placeholder="Pesquisar por matrícula, marca..." />
+        )}
+
         {items.length === 0 ? (
           <Empty text="Sem viaturas" icon="bus-outline" />
         ) : (
-          items.map((v) => {
-            const st = vehicleStatus[v.status] || vehicleStatus.offline;
-            return (
-              <View key={v.id} style={styles.card} testID={`vehicle-row-${v.id}`}>
-                <View style={styles.head}>
-                  <Txt variant="displaySm">{v.plate}</Txt>
-                  <Badge label={st.label} color={st.color} />
-                </View>
-                <Txt variant="mono" color={colors.muted}>{v.brand} {v.model} · {v.year}</Txt>
-                <View style={styles.metaRow}>
-                  <Txt variant="label">CAP {v.capacity_kg}kg</Txt>
-                  <Txt variant="label">KM {v.mileage_km?.toLocaleString?.("pt-PT") || "—"}</Txt>
-                  <Txt variant="label">COMB {v.fuel_pct ?? "—"}%</Txt>
-                </View>
-                {v.allowed_waste_types?.length ? (
-                  <Txt variant="label">RESÍDUOS: {v.allowed_waste_types.map((w: string) => wasteLabels[w]).join(", ")}</Txt>
-                ) : <Txt variant="label">TODOS OS RESÍDUOS</Txt>}
-              </View>
-            );
-          })
+          items
+            .filter((v) => !search || [v.plate, v.brand, v.model].some((f) => f?.toLowerCase().includes(search.toLowerCase())))
+            .map((v) => {
+              const st = vehicleStatus[v.status] || vehicleStatus.offline;
+              return (
+                <CompactCard key={v.id} style={styles.card} testID={`vehicle-row-${v.id}`}>
+                  <View style={styles.head}>
+                    <Txt variant="title">{v.plate}</Txt>
+                    <Badge label={st.label} color={st.color} />
+                  </View>
+                  <Txt variant="mono" color={colors.muted} style={{ fontSize: 13 }}>{v.brand} {v.model} · {v.year}</Txt>
+                  <View style={styles.metaRow}>
+                    <Txt variant="label">CAP {v.capacity_kg}kg</Txt>
+                    <Txt variant="label">KM {v.mileage_km?.toLocaleString?.("pt-PT") || "—"}</Txt>
+                    <Txt variant="label">COMB {v.fuel_pct ?? "—"}%</Txt>
+                  </View>
+                  {v.allowed_waste_types?.length ? (
+                    <Txt variant="label">RESÍDUOS: {v.allowed_waste_types.map((w: string) => wasteLabels[w]).join(", ")}</Txt>
+                  ) : <Txt variant="label">TODOS OS RESÍDUOS</Txt>}
+                </CompactCard>
+              );
+            })
         )}
       </ScrollView>
     </View>
@@ -140,9 +147,9 @@ function Field({ label, ...rest }: any) {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  card: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.xs, backgroundColor: colors.surface },
+  card: { gap: spacing.xs },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  metaRow: { flexDirection: "row", gap: spacing.md, marginTop: spacing.xs },
+  metaRow: { flexDirection: "row", gap: spacing.md, marginTop: 2 },
   form: { borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md, padding: spacing.lg, gap: spacing.xs, backgroundColor: colors.surface },
   formHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   input: {

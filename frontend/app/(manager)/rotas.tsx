@@ -5,13 +5,13 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
 import { ScreenHeader } from "@/src/components/Header";
-import { Btn, Card, Empty, Loading, Txt, useToast } from "@/src/components/ui";
+import { Btn, Card, Empty, Loading, SearchInput, Txt, useToast } from "@/src/components/ui";
 import ContainerPicker from "@/src/components/ContainerPicker";
-import { colors, spacing, border, routeStatus, wasteLabels, vehicleStatus } from "@/src/theme";
+import { colors, spacing, border, radius, routeStatus, wasteLabels, vehicleStatus } from "@/src/theme";
 
 type Vehicle = { id: string; plate: string; capacity_kg: number; allowed_waste_types: string[]; status: string };
 type Driver = { id: string; name: string; status: string };
-type Place = { id: string; name: string };
+type Place = { id: string; name: string; is_primary?: boolean };
 
 function nextDays(n: number) {
   const out: { date: string; label: string }[] = [];
@@ -33,6 +33,7 @@ export default function Rotas() {
   const [routes, setRoutes] = useState<any[] | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState("");
 
   const [date, setDate] = useState(DATE_OPTIONS[0].date);
   const [containerIds, setContainerIds] = useState<string[]>([]);
@@ -67,6 +68,11 @@ export default function Rotas() {
       setDrivers(d.filter((x: any) => x.status === "available" || x.status === "assigned"));
       setDepots(dep);
       setFacilities(fac);
+      // Show the primary depot pre-selected instead of leaving it on the
+      // implicit "AUTOMÁTICO" default — the admin sees exactly which depot
+      // will be used before generating anything.
+      const primary = dep.find((d2) => d2.is_primary);
+      if (primary) setDepotId(primary.id);
     })();
   }, []);
 
@@ -174,13 +180,18 @@ export default function Rotas() {
         {!creating ? (
           <>
             <View style={styles.createRow}>
-              <Btn testID="start-create-route" title="CRIAR AUTOMATICAMENTE" icon="git-network" style={{ flex: 1 }} onPress={() => setCreating(true)} />
-              <Btn testID="start-create-route-map" title="CRIAR NO MAPA" icon="map" variant="outline" style={{ flex: 1 }} onPress={() => router.push("/(manager)/mapa-rota" as any)} />
+              <Btn testID="start-create-route" title="CRIAR AUTOMATICAMENTE" icon="git-network" size="sm" style={{ flex: 1 }} onPress={() => setCreating(true)} />
+              <Btn testID="start-create-route-map" title="CRIAR NO MAPA" icon="map" variant="outline" size="sm" style={{ flex: 1 }} onPress={() => router.push("/(manager)/mapa-rota" as any)} />
             </View>
+            {routes.length > 0 && (
+              <SearchInput testID="search-routes" value={search} onChangeText={setSearch} placeholder="Pesquisar por código ou motorista..." />
+            )}
             {routes.length === 0 ? (
               <Empty text="Nenhuma rota criada." icon="navigate-outline" />
             ) : (
-              routes.map((r) => {
+              routes
+                .filter((r) => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.driver_name?.toLowerCase().includes(search.toLowerCase()))
+                .map((r) => {
                 const st = routeStatus[r.status] || routeStatus.scheduled;
                 return (
                   <Pressable key={r.id} testID={`route-${r.id}`} onPress={() => router.push(`/route/${r.id}` as any)}>
@@ -225,7 +236,7 @@ export default function Rotas() {
             </ScrollView>
 
             <Txt variant="label">CONTENTORES / RECOLHAS</Txt>
-            <ContainerPicker value={containerIds} onChange={setContainerIds} />
+            <ContainerPicker value={containerIds} onChange={setContainerIds} forDate={date} />
 
             <Txt variant="label">VIATURAS DISPONÍVEIS</Txt>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
@@ -289,7 +300,9 @@ export default function Rotas() {
               </Pressable>
               {depots.map((d) => (
                 <Pressable key={d.id} onPress={() => setDepotId(d.id)} style={[styles.chip, depotId === d.id ? styles.chipOn : null]}>
-                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={depotId === d.id ? colors.onSurfaceInverse : colors.onSurface}>{d.name}</Txt>
+                  <Txt variant="monoBold" style={{ fontSize: 11 }} color={depotId === d.id ? colors.onSurfaceInverse : colors.onSurface}>
+                    {d.is_primary ? `★ ${d.name}` : d.name}
+                  </Txt>
                 </Pressable>
               ))}
             </ScrollView>
@@ -330,21 +343,21 @@ const styles = StyleSheet.create({
   formHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   chipRow: { gap: spacing.sm, paddingVertical: 2 },
   chip: {
-    height: 36, justifyContent: "center", paddingHorizontal: spacing.md,
-    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
+    height: 34, justifyContent: "center", paddingHorizontal: spacing.md,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.pill,
     backgroundColor: colors.surface,
   },
   pickChip: {
     minWidth: 160, gap: 2, paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    borderWidth: border.width, borderColor: colors.border, borderRadius: 16,
+    borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md,
     backgroundColor: colors.surface,
   },
   chipOn: { backgroundColor: colors.onSurface },
   stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  stepper: { flexDirection: "row", alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: 16 },
-  stepBtn: { width: 36, height: 36, alignItems: "center", justifyContent: "center" },
-  routeCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
+  stepper: { flexDirection: "row", alignItems: "center", borderWidth: border.width, borderColor: colors.border, borderRadius: radius.pill },
+  stepBtn: { width: 34, height: 34, alignItems: "center", justifyContent: "center" },
+  routeCard: { borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, gap: spacing.xs, backgroundColor: colors.surface },
   routeHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  stTag: { paddingHorizontal: spacing.sm, paddingVertical: 4 },
-  routeStats: { flexDirection: "row", marginTop: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
+  stTag: { borderRadius: radius.xs, paddingHorizontal: spacing.sm, paddingVertical: 3 },
+  routeStats: { flexDirection: "row", marginTop: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.xs },
 });

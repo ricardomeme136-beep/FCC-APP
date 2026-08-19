@@ -16,6 +16,19 @@ export const colors = {
   brandSoft: "#FFF1E8",
   onBrandSoft: "#C2410C",
 
+  // FCC Meio Ambiente institutional identity — additive tokens, confirmed by
+  // pixel sampling the real logo (assets/images/fcc-logo.png) and the live
+  // site's production CSS. Used starting with the admin painel redesign;
+  // `brand` (orange) is untouched and keeps meaning "warning/attention" per
+  // that redesign's own color rule, and stays the driver app's primary color.
+  fccBlue: "#224A91",
+  onFccBlue: "#FFFFFF",
+  fccBlueSoft: "#E8EDF4",
+  fccBlueLight: "#0074AD",
+  fccGreen: "#1C8A44",
+  onFccGreen: "#FFFFFF",
+  fccGreenSoft: "#E3F3E9",
+
   success: "#16A34A",
   successSoft: "#DCFCE7",
   onSuccess: "#FFFFFF",
@@ -38,14 +51,14 @@ export const colors = {
 export const spacing = {
   xs: 4,
   sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  "2xl": 32,
-  "3xl": 48,
+  md: 10,
+  lg: 12,
+  xl: 16,
+  "2xl": 24,
+  "3xl": 40,
 };
 
-export const radius = { xs: 8, sm: 12, md: 16, lg: 20, xl: 28, pill: 999 };
+export const radius = { xs: 6, sm: 10, md: 14, lg: 16, xl: 22, pill: 999 };
 
 export const fonts = {
   display: "SpaceGrotesk-Bold",
@@ -65,9 +78,9 @@ export const shadows: Record<string, ViewStyle> = {
     default: { boxShadow: "0 2px 8px rgba(15,23,42,0.05)" } as any,
   }) as ViewStyle,
   card: Platform.select({
-    ios: { shadowColor: "#0F172A", shadowOpacity: 0.07, shadowRadius: 20, shadowOffset: { width: 0, height: 8 } },
-    android: { elevation: 3 },
-    default: { boxShadow: "0 8px 24px rgba(15,23,42,0.07), 0 2px 6px rgba(15,23,42,0.04)" } as any,
+    ios: { shadowColor: "#0F172A", shadowOpacity: 0.05, shadowRadius: 10, shadowOffset: { width: 0, height: 3 } },
+    android: { elevation: 2 },
+    default: { boxShadow: "0 3px 10px rgba(15,23,42,0.05), 0 1px 3px rgba(15,23,42,0.04)" } as any,
   }) as ViewStyle,
   // A touch stronger — floating panels, sheets, anything that should read as
   // sitting clearly above the page (modals, the map editor's side panel).
@@ -110,6 +123,12 @@ export const routeStatus: Record<string, { label: string; color: string }> = {
   cancelled: { label: "CANCELADA", color: colors.error },
 };
 
+export const trackingSessionStatus: Record<string, { label: string; color: string }> = {
+  recording: { label: "A GRAVAR", color: colors.error },
+  completed: { label: "CONCLUÍDO", color: colors.success },
+  cancelled: { label: "CANCELADO", color: colors.muted },
+};
+
 export const incidentStatus: Record<string, { label: string; color: string }> = {
   open: { label: "ABERTA", color: colors.error },
   assigned: { label: "ATRIBUÍDA", color: colors.warning },
@@ -138,6 +157,15 @@ export const wasteLabels: Record<string, string> = {
   food: "Alimentares",
   commercial: "Comerciais",
   other: "Outros",
+};
+
+// Real presence (Fase ACTIVITY 1) — derived from login/heartbeat/route
+// status, never from employment_status (see incidentStatus-style maps
+// above). "on_route" only applies while activity_status isn't "offline".
+export const activityStatus: Record<string, { label: string; color: string; dot: string }> = {
+  on_route: { label: "EM ROTA", color: colors.brand, dot: "🟢" },
+  online: { label: "ONLINE", color: colors.success, dot: "🟢" },
+  offline: { label: "OFFLINE", color: colors.muted, dot: "⚫" },
 };
 
 export const roleLabels: Record<string, string> = {

@@ -69,6 +69,7 @@ class DepotIn(BaseModel):
     lng: float
     hours: str = "06:00 - 22:00"
     capacity: str = ""
+    is_primary: bool = False  # default start/end point for routes when none is chosen manually
 
 
 class FacilityIn(BaseModel):
@@ -113,6 +114,26 @@ class GpsIn(BaseModel):
     speed: float = 0
     heading: float = 0
     status: str = "en_route"
+
+
+class TrackingSessionStartIn(BaseModel):
+    lat: float
+    lng: float
+
+
+class TrackingPointIn(BaseModel):
+    point_uuid: str  # client-generated — the idempotency key that makes a resent batch safe to replay
+    lat: float
+    lng: float
+    timestamp: str  # device clock, ISO8601 — used to order points for playback/distance
+    speed: Optional[float] = None
+    heading: Optional[float] = None
+    accuracy: Optional[float] = None
+    altitude: Optional[float] = None
+
+
+class TrackingPointsIn(BaseModel):
+    points: List[TrackingPointIn]
 
 
 class TaskCompleteIn(BaseModel):
@@ -191,11 +212,12 @@ class ManualRouteStopIn(BaseModel):
     lat: float
     lng: float
     address: str = ""
+    container_id: Optional[str] = None
 
 
 class ManualRouteIn(BaseModel):
     date: str
-    start: ManualRouteEndpoint
+    start: ManualRouteEndpoint = ManualRouteEndpoint()  # omitted -> falls back to the primary depot
     end: ManualRouteEndpoint = ManualRouteEndpoint()
     stops: List[ManualRouteStopIn]
     vehicle_id: Optional[str] = None
@@ -229,6 +251,14 @@ class RouteAssignmentIn(BaseModel):
     vehicle_id: Optional[str] = None
 
 
+class RouteDeleteIn(BaseModel):
+    password: str
+
+
+class ContainerDeleteIn(BaseModel):
+    password: Optional[str] = None
+
+
 class RouteStartIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -237,6 +267,13 @@ class RouteStartIn(BaseModel):
 class RouteFinishIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
+
+
+class HeartbeatIn(BaseModel):
+    # Informational only — activity_status is always derived server-side
+    # from a real in_progress route, never trusted from the client.
+    route_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
 
 
 class AiQuery(BaseModel):

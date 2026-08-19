@@ -6,8 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
 import { ScreenHeader } from "@/src/components/Header";
-import { Badge, Btn, Empty, Loading, Txt, useToast } from "@/src/components/ui";
-import { colors, spacing, border, radius } from "@/src/theme";
+import { ActionMenu, Badge, Btn, CompactCard, Empty, Loading, SearchInput, Txt, useToast } from "@/src/components/ui";
+import { colors, spacing, border, radius, activityStatus } from "@/src/theme";
 
 const EMPLOYMENT_STATUS: Record<string, { label: string; color: string }> = {
   ativo: { label: "ATIVO", color: colors.success },
@@ -22,12 +22,12 @@ export default function Motoristas() {
   const toast = useToast();
   const [drivers, setDrivers] = useState<any[] | null>(null);
   const [vehicles, setVehicles] = useState<any[]>([]);
-  const [routesToday, setRoutesToday] = useState<any[]>([]);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [actionsFor, setActionsFor] = useState<any | null>(null);
   const [resetFor, setResetFor] = useState<any | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [search, setSearch] = useState("");
 
   const [name, setName] = useState("");
   const [employeeNumber, setEmployeeNumber] = useState("");
@@ -42,15 +42,12 @@ export default function Motoristas() {
   const [vehicleId, setVehicleId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const [d, v, r] = await Promise.all([
+    const [d, v] = await Promise.all([
       api.get<any[]>("/drivers"),
       api.get<any[]>("/vehicles"),
-      api.get<any[]>("/routes"),
     ]);
     setDrivers(d);
     setVehicles(v);
-    setRoutesToday(r.filter((route) => route.date === today));
   }, []);
   useFocusEffect(useCallback(() => { load(); }, [load]));
 
@@ -127,7 +124,7 @@ export default function Motoristas() {
       <ScreenHeader title="MOTORISTAS" subtitle={`${drivers.length} na equipa`} back />
       <ScrollView contentContainerStyle={styles.scroll}>
         {!creating ? (
-          <Btn testID="start-create-driver" title="NOVO MOTORISTA" icon="person-add" onPress={() => setCreating(true)} />
+          <Btn testID="start-create-driver" title="NOVO MOTORISTA" icon="person-add" size="sm" onPress={() => setCreating(true)} />
         ) : (
           <View style={styles.form}>
             <View style={styles.formHead}>
@@ -173,49 +170,62 @@ export default function Motoristas() {
           </View>
         )}
 
+        {drivers.length > 0 && !creating && (
+          <SearchInput testID="search-drivers" value={search} onChangeText={setSearch} placeholder="Pesquisar por nome..." />
+        )}
+
         {drivers.length === 0 ? (
           <Empty text="Sem motoristas" icon="people-outline" />
         ) : (
-          drivers.map((d) => {
-            const emp = EMPLOYMENT_STATUS[d.employment_status] || EMPLOYMENT_STATUS.ativo;
-            const route = routesToday.find((r) => r.driver_id === d.id && r.status !== "completed" && r.status !== "cancelled");
-            const vehicle = vehicles.find((v) => v.id === d.vehicle_id);
-            return (
-              <Pressable key={d.id} testID={`driver-row-${d.id}`} onPress={() => setActionsFor(d)} style={styles.card}>
-                <View style={styles.head}>
-                  <View style={styles.avatar}><Txt variant="title" color="#fff">{d.name[0]}</Txt></View>
-                  <View style={{ flex: 1 }}>
-                    <Txt variant="title">{d.name}</Txt>
-                    <Txt variant="mono" color={colors.muted}>{d.phone || "Sem telefone"}</Txt>
-                  </View>
-                  <Badge label={emp.label} color={emp.color} />
-                </View>
-                <Txt variant="label">
-                  {route ? `ROTA ATUAL: ${route.code}` : "SEM ROTA"} {vehicle ? `· ${vehicle.plate}` : ""}
-                </Txt>
-              </Pressable>
-            );
-          })
+          drivers
+            .filter((d) => !search || d.name?.toLowerCase().includes(search.toLowerCase()))
+            .map((d) => {
+              const emp = EMPLOYMENT_STATUS[d.employment_status] || EMPLOYMENT_STATUS.ativo;
+              const act = activityStatus[d.activity_status] || activityStatus.offline;
+              return (
+                <Pressable key={d.id} testID={`driver-row-${d.id}`} onPress={() => setActionsFor(d)}>
+                  <CompactCard style={styles.card}>
+                    <View style={styles.head}>
+                      <View style={styles.avatar}><Txt variant="monoBold" color="#fff">{d.name[0]}</Txt></View>
+                      <View style={{ flex: 1 }}>
+                        <Txt variant="monoBold">{d.name}</Txt>
+                        <Txt variant="mono" color={colors.muted} style={{ fontSize: 12 }}>{d.phone || "Sem telefone"}</Txt>
+                      </View>
+                      <Badge label={emp.label} color={emp.color} />
+                    </View>
+                    <View style={styles.activityRow}>
+                      <View style={[styles.activityDot, { backgroundColor: act.color }]} />
+                      <Txt variant="label" color={act.color}>
+                        {act.label}
+                        {d.activity_status === "on_route" && d.current_route_code ? ` · ${d.current_route_code}` : ""}
+                        {d.activity_status === "on_route" && d.current_vehicle_plate ? ` · ${d.current_vehicle_plate}` : ""}
+                      </Txt>
+                    </View>
+                  </CompactCard>
+                </Pressable>
+              );
+            })
         )}
       </ScrollView>
 
-      <Modal visible={!!actionsFor} transparent animationType="slide" onRequestClose={() => setActionsFor(null)}>
-        <Pressable style={styles.backdrop} onPress={() => setActionsFor(null)}>
-          <Pressable style={[styles.sheet, { paddingBottom: insets.bottom + spacing.lg }]} onPress={(e) => e.stopPropagation()}>
-            <Txt variant="displaySm">{actionsFor?.name}</Txt>
-            <Pressable testID="action-reset-password" style={styles.menuRow} onPress={() => { setResetFor(actionsFor); setActionsFor(null); }}>
-              <Txt variant="monoBold">Resetar password</Txt>
-              <Ionicons name="key-outline" size={18} color={colors.onSurface} />
-            </Pressable>
-            <Pressable testID="action-toggle-active" style={styles.menuRow} onPress={() => actionsFor && toggleActive(actionsFor)}>
-              <Txt variant="monoBold" color={actionsFor?.employment_status === "inativo" ? colors.success : colors.error}>
-                {actionsFor?.employment_status === "inativo" ? "Reativar motorista" : "Desativar motorista"}
-              </Txt>
-              <Ionicons name={actionsFor?.employment_status === "inativo" ? "checkmark-circle-outline" : "close-circle-outline"} size={18} color={actionsFor?.employment_status === "inativo" ? colors.success : colors.error} />
-            </Pressable>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      <ActionMenu
+        visible={!!actionsFor}
+        onClose={() => setActionsFor(null)}
+        title={actionsFor?.name}
+        items={[
+          {
+            label: "Resetar password", icon: "key-outline", testID: "action-reset-password",
+            onPress: () => setResetFor(actionsFor),
+          },
+          {
+            label: actionsFor?.employment_status === "inativo" ? "Reativar motorista" : "Desativar motorista",
+            icon: actionsFor?.employment_status === "inativo" ? "checkmark-circle-outline" : "close-circle-outline",
+            destructive: actionsFor?.employment_status !== "inativo",
+            testID: "action-toggle-active",
+            onPress: () => actionsFor && toggleActive(actionsFor),
+          },
+        ]}
+      />
 
       <Modal visible={!!resetFor} transparent animationType="fade" onRequestClose={() => setResetFor(null)}>
         <Pressable style={styles.backdrop} onPress={() => setResetFor(null)}>
@@ -251,9 +261,11 @@ function Field({ label, ...rest }: any) {
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
-  card: { borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm, backgroundColor: colors.surface },
-  head: { flexDirection: "row", alignItems: "center", gap: spacing.md },
-  avatar: { width: 44, height: 44, backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center", borderRadius: 22 },
+  card: { gap: spacing.xs },
+  head: { flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  activityRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  activityDot: { width: 7, height: 7, borderRadius: radius.pill },
+  avatar: { width: 36, height: 36, backgroundColor: colors.onSurface, alignItems: "center", justifyContent: "center", borderRadius: radius.pill },
   form: { borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md, padding: spacing.lg, gap: spacing.xs, backgroundColor: colors.surface },
   formHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   input: {
@@ -266,5 +278,4 @@ const styles = StyleSheet.create({
   chipOn: { backgroundColor: colors.onSurface },
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
   sheet: { backgroundColor: colors.surface, borderTopLeftRadius: radius.lg, borderTopRightRadius: radius.lg, padding: spacing.lg, gap: spacing.sm },
-  menuRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderWidth: border.width, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, marginTop: spacing.sm },
 });

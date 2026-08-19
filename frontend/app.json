@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "frontend",
-    "slug": "frontend",
+    "slug": "silva",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -10,7 +10,12 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.emergent.fleettrack.owsuqj"
+      "bundleIdentifier": "com.emergent.fleettrack.owsuqj",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -18,7 +23,15 @@
         "backgroundColor": "#000000"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.emergent.fleettrack.owsuqj"
+      "package": "com.emergent.fleettrack.owsuqj",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -39,12 +52,25 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "O WasteFlow precisa da sua localização para confirmar a recolha do contentor."
+          "locationWhenInUsePermission": "O WasteFlow precisa da sua localização para confirmar a recolha do contentor.",
+          "locationAlwaysAndWhenInUsePermission": "O WasteFlow precisa de aceder à localização em segundo plano para continuar a enviar a posição durante uma rota em curso ou uma gravação de trajeto, mesmo com o ecrã bloqueado.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      "expo-task-manager",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "276983b3-9534-4bcd-98c0-f583b933498e"
+      }
+    },
+    "owner": "fcc-apps-team"
   }
 }

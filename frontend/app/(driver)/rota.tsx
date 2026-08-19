@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { api } from "@/src/api";
 import { getCurrentLocation } from "@/src/utils/location";
+import { markRouteActive } from "@/src/tracking/activeContext";
 import { ScreenHeader } from "@/src/components/Header";
 import { Btn, Loading, Txt, useToast } from "@/src/components/ui";
 import { colors, spacing, border, radius, routeStatus } from "@/src/theme";
@@ -37,7 +38,13 @@ export default function DriverRota() {
 
   useEffect(() => {
     if (!selectedId) { setDetail(null); return; }
-    api.get<any>(`/routes/${selectedId}`).then(setDetail).catch(() => setDetail(null));
+    api.get<any>(`/routes/${selectedId}`).then((r) => {
+      setDetail(r);
+      // Resume case: the app was reopened while this route was already
+      // in_progress — background tracking for it must resume too, not only
+      // when beginRoute() itself was the thing that started it.
+      if (r.status === "in_progress" && r.vehicle_id) markRouteActive(r.vehicle_id);
+    }).catch(() => setDetail(null));
   }, [selectedId]);
 
   const beginRoute = async () => {
@@ -52,6 +59,7 @@ export default function DriverRota() {
         toast("Não foi possível obter a localização inicial — a rota vai iniciar na mesma", "info");
       }
       await api.post(`/routes/${detail.id}/start`, gps);
+      if (detail.vehicle_id) await markRouteActive(detail.vehicle_id);
       router.replace("/(driver)/navegacao");
     } catch (e: any) {
       toast(e?.message || "Erro ao iniciar a rota", "error");
@@ -116,6 +124,15 @@ export default function DriverRota() {
               <SumCell label="ESTIMADO" value={`${Math.floor(detail.duration_min / 60)}h${Math.round(detail.duration_min % 60)}`} />
             </View>
 
+            {(detail.stops || []).length > 0 && (detail.tasks || []).length === 0 && (
+              <View style={styles.warnBox}>
+                <Ionicons name="warning" size={18} color={colors.warning} />
+                <Txt variant="mono" color={colors.warning} style={{ flex: 1, fontSize: 12 }}>
+                  Esta rota tem {(detail.stops || []).length} paragens mas nenhum contentor atribuído. Contacte o administrador.
+                </Txt>
+              </View>
+            )}
+
             {detail.status === "scheduled" && (
               <Btn testID="begin-route" title="COMEÇAR ROTA" icon="play" size="xl" loading={starting} onPress={beginRoute} style={{ marginTop: spacing.lg }} />
             )}
@@ -158,6 +175,7 @@ const styles = StyleSheet.create({
   stTag: { paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: 8 },
   summary: { backgroundColor: colors.onSurface, borderWidth: border.width, borderColor: colors.border, borderRadius: 16, padding: spacing.lg, gap: spacing.sm },
   row: { flexDirection: "row", justifyContent: "space-between" },
+  warnBox: { flexDirection: "row", alignItems: "center", gap: spacing.sm, backgroundColor: "rgba(245,158,11,0.15)", borderRadius: radius.md, padding: spacing.sm },
   summaryGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.md, marginTop: spacing.sm },
   sumCell: { width: "47%" },
   doneBox: { alignItems: "center", gap: spacing.xs, marginTop: spacing.lg },

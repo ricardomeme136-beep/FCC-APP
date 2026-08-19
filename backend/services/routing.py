@@ -91,6 +91,14 @@ async def road_route(stops: List[Tuple[float, float]]) -> Dict:
                     "distance_m": st.get("distance"),
                     "duration_s": st.get("duration"),
                     "name": st.get("name"),
+                    # Passthrough only — ORS already computes these, they were
+                    # just never forwarded. The frontend uses `type` (a
+                    # stable, documented numeric sign) to build proper
+                    # PT-PT turn-by-turn presentation instead of the raw
+                    # `text` above, which for a "depart" step renders as an
+                    # unhelpful compass heading ("Siga para sudoeste...").
+                    "type": st.get("type"),
+                    "exit_number": st.get("exit_number"),
                 })
         return {
             "coordinates": coords,
