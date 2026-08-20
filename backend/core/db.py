@@ -34,12 +34,24 @@ async def ensure_indexes() -> None:
         "vehicles", "drivers", "containers", "routes", "collection_tasks",
         "incidents", "depots", "facilities", "customers", "zones",
         "gps_positions", "notifications", "audit_logs", "route_stops",
-        "tracking_sessions", "route_templates",
+        "tracking_sessions", "route_templates", "route_schedules",
     ]:
         await db[coll].create_index([("company_id", 1)])
     await db.route_templates.create_index("name")
     await db.route_templates.create_index("active")
     await db.route_templates.create_index([("company_id", 1), ("active", 1)])
+    await db.route_schedules.create_index("active")
+    await db.route_schedules.create_index([("company_id", 1), ("active", 1)])
+    await db.route_schedules.create_index([("company_id", 1), ("template_id", 1)])
+    # Idempotency guarantee for schedule materialization at the database
+    # level (application code also checks before inserting, this is the
+    # backstop against concurrent/duplicate materialize calls). Partial:
+    # only applies to routes that actually have a schedule_id (old/manual
+    # routes keep schedule_id == None and are exempt).
+    await db.routes.create_index(
+        [("schedule_id", 1), ("date", 1)], unique=True,
+        partialFilterExpression={"schedule_id": {"$type": "string"}})
+    await db.routes.create_index([("company_id", 1), ("date", 1)])
     await db.gps_positions.create_index([("vehicle_id", 1), ("timestamp", -1)])
     await db.gps_positions.create_index([("tracking_session_id", 1), ("timestamp", 1)])
     # sparse: only recorded-trajectory points carry a point_uuid — live nav

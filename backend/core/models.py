@@ -361,3 +361,30 @@ class CreateExecutionFromTemplateIn(BaseModel):
     start_time: Optional[str] = None  # "HH:MM" — planned_start_time on the created route
     driver_id: Optional[str] = None
     vehicle_id: Optional[str] = None
+
+
+# ---- Weekly scheduling / recurrence (Fase 3) ----
+
+class RouteScheduleCreateIn(BaseModel):
+    template_id: str
+    name: Optional[str] = None
+    recurrence_type: str  # "once" | "weekly" | "weekdays" | "daily"
+    start_date: str
+    end_date: Optional[str] = None
+    weekdays: List[int] = []  # only meaningful when recurrence_type == "weekly" (0=Mon..6=Sun)
+    planned_start_time: Optional[str] = None
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+
+
+class RouteScheduleUpdateIn(BaseModel):
+    name: Optional[str] = None
+    template_id: Optional[str] = None
+    recurrence_type: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    weekdays: Optional[List[int]] = None
+    planned_start_time: Optional[str] = None
+    driver_id: Optional[str] = None
+    vehicle_id: Optional[str] = None
+    active: Optional[bool] = None

@@ -309,38 +309,43 @@ async def remove_template_stop(tid: str, sid: str, request: Request,
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
-@router.post("/{tid}/create-execution")
-async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, request: Request,
-                           user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
-    """Fase 2 — the ONLY way a route_template turns into a real, operational
-    `routes` document. Everything written here is a snapshot copy: stops,
-    geometry, containers, distance/duration are all read from the template
-    exactly once, right now, and never referenced again — editing the
-    template after this point (or even deleting it) must never change this
-    execution. Reuses _route_code() and check_scheduling_conflicts() from
-    routers/routes.py rather than duplicating them; the stop/task-creation
-    loop below is structurally the same shape as optimize()'s (each stop
-    already carries a list of containers, pre-grouped — unlike
+async def _build_execution_from_template(user: dict, template: dict, *, date: str,
+                                          start_time: Optional[str], driver_id: Optional[str],
+                                          vehicle_id: Optional[str], schedule_id: Optional[str] = None) -> tuple:
+    """Fase 2/3 — the ONLY place a route_template turns into a real,
+    operational `routes` document. Shared by two callers: the one-off
+    `POST /{tid}/create-execution` below (schedule_id=None) and Fase 3's
+    `route_schedules` materialization (schedule_id set) — deliberately a
+    single implementation, never duplicated. Everything written here is a
+    snapshot copy: stops, geometry, containers, distance/duration are all
+    read from the template exactly once, right now, and never referenced
+    again — editing the template after this point (or even deleting it)
+    must never change this execution. Reuses _route_code() and
+    check_scheduling_conflicts() from routers/routes.py; the stop/task-
+    creation loop below is structurally the same shape as optimize()'s
+    (each stop already carries a list of containers, pre-grouped — unlike
     create_manual_route()'s one-container-per-stop shape, so it isn't a fit
-    for reusing that loop directly)."""
-    template = await _get_template_or_404(user, tid)
+    for reusing that loop directly). Returns (route_doc, warnings); raises
+    HTTPException on any validation failure."""
     if not template.get("active", True):
         raise HTTPException(400, "Este template está arquivado — reative-o antes de criar uma execução")
-    if body.start_time and not _TIME_RE.match(body.start_time):
+    if start_time and not _TIME_RE.match(start_time):
         raise HTTPException(400, "Hora inválida — use o formato HH:MM")
 
     driver = None
-    if body.driver_id:
-        driver = await db.drivers.find_one(tenant_query(user, {"id": body.driver_id}), NO_ID)
+    if driver_id:
+        driver = await db.drivers.find_one(tenant_query(user, {"id": driver_id}), NO_ID)
         if not driver:
             raise HTTPException(400, "Motorista inválido")
     vehicle = None
-    if body.vehicle_id:
-        vehicle = await db.vehicles.find_one(tenant_query(user, {"id": body.vehicle_id}), NO_ID)
+    if vehicle_id:
+        vehicle = await db.vehicles.find_one(tenant_query(user, {"id": vehicle_id}), NO_ID)
         if not vehicle:
             raise HTTPException(400, "Viatura inválida")
 
-    warnings = await check_scheduling_conflicts(user, body.date, body.driver_id, body.vehicle_id)
+    warnings = await check_scheduling_conflicts(
+        user, date, driver_id, vehicle_id,
+        start_time=start_time, duration_min=template.get("duration_min"))
 
     # Resolve every container referenced by the template NOW — the execution
     # must never depend on reading the template again later (point 10). If a
@@ -362,7 +367,7 @@ async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, reques
     route_doc = {
         "id": rid, "company_id": company_id,
         "code": _route_code(await db.routes.count_documents({"company_id": company_id})),
-        "date": body.date, "planned_start_time": body.start_time, "zone_id": template.get("zone_id"),
+        "date": date, "planned_start_time": start_time, "zone_id": template.get("zone_id"),
         "driver_id": driver["id"] if driver else None,
         "driver_name": driver["name"] if driver else None,
         "vehicle_id": vehicle["id"] if vehicle else None,
@@ -374,7 +379,7 @@ async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, reques
         "distance_km": template.get("distance_km") or 0.0, "duration_min": template.get("duration_min") or 0.0,
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
-        "mode": "template", "template_id": tid,
+        "mode": "template", "template_id": template["id"], "schedule_id": schedule_id,
         "status": "scheduled", "created_at": now_iso(),
         # Snapshotted directly, never lazily recomputed from the template —
         # the whole point of this field per point 2 of the spec.
@@ -398,7 +403,7 @@ async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, reques
                 "vehicle_id": vehicle["id"] if vehicle else None,
                 "sequence": task_seq, "waste_type": c["waste_type"],
                 "address": c.get("address", ""), "lat": c["lat"], "lng": c["lng"],
-                "status": "scheduled", "scheduled_date": body.date,
+                "status": "scheduled", "scheduled_date": date,
                 "load_kg": None, "arrived_at": None, "completed_at": None,
                 "gps": None, "photo_url": None, "notes": "", "fail_reason": None,
             })
@@ -416,6 +421,18 @@ async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, reques
                                     {"$set": {"status": "assigned", "vehicle_id": vehicle["id"] if vehicle else None}})
 
     route_doc.pop("_id", None)
-    await write_audit(user, "create_execution_from_template", "route", rid, request,
+    return route_doc, warnings
+
+
+@router.post("/{tid}/create-execution")
+async def create_execution(tid: str, body: CreateExecutionFromTemplateIn, request: Request,
+                           user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Fase 2 — one-off template -> execution. See _build_execution_from_template
+    for the actual snapshot logic (shared with Fase 3 schedules)."""
+    template = await _get_template_or_404(user, tid)
+    route_doc, warnings = await _build_execution_from_template(
+        user, template, date=body.date, start_time=body.start_time,
+        driver_id=body.driver_id, vehicle_id=body.vehicle_id)
+    await write_audit(user, "create_execution_from_template", "route", route_doc["id"], request,
                       old={"template_id": tid}, new={"date": body.date, "code": route_doc["code"]})
     return {"route": route_doc, "warnings": warnings}

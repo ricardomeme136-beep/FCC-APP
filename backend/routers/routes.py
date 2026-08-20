@@ -145,29 +145,75 @@ REOPTIMIZE_STATUSES = {"scheduled", "in_progress"}
 _STATUS_LABEL_PT = {"in_progress": "em curso", "completed": "concluída", "cancelled": "arquivada/eliminada"}
 
 
+# Floor applied to a route's estimated duration when computing time-interval
+# overlap (Fase 3, point 18) — without it, a route with duration_min == 0/None
+# (no ORS key, or geometry not yet computed) would look "instantaneous" and
+# slip past a real conflict. 30 min is a deliberately small, conservative
+# minimum, not a real duration estimate.
+MIN_ASSUMED_DURATION_MIN = 30
+
+
+def _hhmm_to_minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _intervals_overlap(a_start: str, a_dur, b_start: str, b_dur) -> bool:
+    a0 = _hhmm_to_minutes(a_start)
+    a1 = a0 + max(a_dur or 0, MIN_ASSUMED_DURATION_MIN)
+    b0 = _hhmm_to_minutes(b_start)
+    b1 = b0 + max(b_dur or 0, MIN_ASSUMED_DURATION_MIN)
+    return a0 < b1 and b0 < a1
+
+
 async def check_scheduling_conflicts(user: dict, date: str, driver_id: Optional[str],
-                                     vehicle_id: Optional[str]) -> list:
-    """Simple, advisory-only scheduling check (Fase 2, point 6) — never
-    blocks creation, just reports what it finds so the caller can warn. Only
-    checks "does this driver/vehicle already have another active route the
-    same day" against real routes; a full availability system (leave,
-    maintenance, workshop status) is an explicitly deferred future extension
-    — it would plug in here as more checks appended to the same list, not a
-    redesign of this function's shape or callers."""
+                                     vehicle_id: Optional[str], *, start_time: Optional[str] = None,
+                                     duration_min: Optional[float] = None,
+                                     exclude_route_id: Optional[str] = None) -> list:
+    """Simple, advisory-only scheduling check (Fase 2, point 6; extended Fase 3,
+    point 18) — never blocks creation, just reports what it finds so the
+    caller can warn. Only checks "does this driver/vehicle already have
+    another active route that actually overlaps in time" against real
+    routes; a full availability system (leave, maintenance, workshop status)
+    is an explicitly deferred future extension — it would plug in here as
+    more checks appended to the same list, not a redesign of this function's
+    shape or callers.
+
+    Time-interval logic (Fase 3): when the caller passes `start_time` (its
+    own planned_start_time) AND an existing same-day route also has a
+    planned_start_time, the two are compared as real intervals
+    ([start, start+duration], floored at MIN_ASSUMED_DURATION_MIN) and a
+    warning only fires on genuine overlap — two routes for the same
+    driver/vehicle on the same day but at non-overlapping times are fine
+    (point 18's worked example). When either side lacks a start_time, there
+    is not enough information to reason about overlap, so this falls back to
+    the original whole-day check (same-day + same driver/vehicle == warn) —
+    the same conservative behaviour Fase 2 always had, still exercised by
+    every pre-Fase-3 caller since `start_time` defaults to None."""
     ACTIVE_STATUSES = ["scheduled", "in_progress"]
+
+    async def _find_conflicts(field: str, value: Optional[str]) -> list:
+        if not value:
+            return []
+        q = {field: value, "date": date, "status": {"$in": ACTIVE_STATUSES}}
+        if exclude_route_id:
+            q["id"] = {"$ne": exclude_route_id}
+        candidates = await db.routes.find(tenant_query(user, q), NO_ID).to_list(50)
+        if not candidates:
+            return []
+        if start_time is None:
+            return candidates[:1]
+        return [r for r in candidates
+                if not r.get("planned_start_time")
+                or _intervals_overlap(start_time, duration_min, r["planned_start_time"], r.get("duration_min"))]
+
     warnings = []
-    if driver_id:
-        existing = await db.routes.find_one(tenant_query(user, {
-            "driver_id": driver_id, "date": date, "status": {"$in": ACTIVE_STATUSES},
-        }), NO_ID)
-        if existing:
-            warnings.append(f"O motorista já tem a rota {existing.get('code')} nesta data.")
-    if vehicle_id:
-        existing = await db.routes.find_one(tenant_query(user, {
-            "vehicle_id": vehicle_id, "date": date, "status": {"$in": ACTIVE_STATUSES},
-        }), NO_ID)
-        if existing:
-            warnings.append(f"A viatura já está atribuída à rota {existing.get('code')} nesta data.")
+    for c in await _find_conflicts("driver_id", driver_id):
+        suffix = f" ({c['planned_start_time']})" if c.get("planned_start_time") else ""
+        warnings.append(f"O motorista já tem a rota {c.get('code')} nesta data{suffix}.")
+    for c in await _find_conflicts("vehicle_id", vehicle_id):
+        suffix = f" ({c['planned_start_time']})" if c.get("planned_start_time") else ""
+        warnings.append(f"A viatura já está atribuída à rota {c.get('code')} nesta data{suffix}.")
     return warnings
 
 
@@ -400,7 +446,7 @@ async def optimize(body: OptimizeIn, request: Request,
             "capacity_utilization": p["capacity_utilization"],
             "load_kg": p["load_kg"],
             "actual_distance_km": None, "actual_duration_min": None,
-            "template_id": None, "planned_start_time": None,
+            "template_id": None, "planned_start_time": None, "schedule_id": None,
             "status": "scheduled", "created_at": now_iso(),
         }
         await db.routes.insert_one(route_doc)
@@ -890,7 +936,7 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
         "distance_km": dist_km, "duration_min": duration_min,
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
-        "mode": body.mode, "template_id": None, "planned_start_time": None,
+        "mode": body.mode, "template_id": None, "planned_start_time": None, "schedule_id": None,
         "status": "scheduled", "created_at": now_iso(),
     }
     await db.routes.insert_one(route_doc)
