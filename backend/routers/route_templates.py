@@ -380,6 +380,7 @@ async def _build_execution_from_template(user: dict, template: dict, *, date: st
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
         "mode": "template", "template_id": template["id"], "schedule_id": schedule_id,
+        "schedule_overridden": False,
         "status": "scheduled", "created_at": now_iso(),
         # Snapshotted directly, never lazily recomputed from the template —
         # the whole point of this field per point 2 of the spec.

@@ -57,6 +57,8 @@ export default function Agenda() {
   const [jumpDate, setJumpDate] = useState("");
 
   const [cardMenuFor, setCardMenuFor] = useState<any | null>(null);
+  const [cancelFor, setCancelFor] = useState<any | null>(null);
+  const [cancelling, setCancelling] = useState(false);
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -220,6 +222,42 @@ export default function Agenda() {
 
   const openCard = (item: any) => router.push(`/route/${item.id}` as any);
 
+  const formatDatePt = (iso: string) => {
+    const [, m, d] = iso.split("-");
+    return `${d}/${m}`;
+  };
+
+  const openCancel = (item: any) => { setCardMenuFor(null); setCancelFor(item); };
+
+  const confirmCancel = async () => {
+    if (!cancelFor) return;
+    setCancelling(true);
+    const target = cancelFor;
+    try {
+      if (target.schedule_id) {
+        const res = await api.post<{ removed_route: boolean }>(
+          `/route-schedules/${target.schedule_id}/cancel-occurrence`, { date: target.date });
+        toast(res.removed_route ? "Execução cancelada" : "Data excluída da recorrência", "success");
+      } else {
+        await api.del(`/routes/${target.id}`);
+        toast("Execução cancelada", "success");
+      }
+      setCancelFor(null);
+      await loadCalendar();
+    } catch (e: any) {
+      // Real history (in_progress/completed/collected work) — both backend
+      // paths refuse the trivial cancel here on purpose and point back at
+      // /route/{id}'s own password-gated archive flow (point 8: reuse the
+      // existing safe rules rather than a second, divergent confirmation
+      // dialog for the sensitive case).
+      setCancelFor(null);
+      toast(e?.message || "Não foi possível cancelar — abra a rota para arquivar com confirmação", "error");
+      router.push(`/route/${target.id}` as any);
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   if (!items) {
     return (<View style={styles.flex}><ScreenHeader title="AGENDA" subtitle="PLANEAMENTO SEMANAL" /><Loading /></View>);
   }
@@ -266,8 +304,7 @@ export default function Agenda() {
                   {dayItems.length === 0 ? (
                     <Txt variant="label" color={colors.muted} style={{ textAlign: "center", marginTop: spacing.md }}>Sem rotas</Txt>
                   ) : dayItems.map((it) => (
-                    <AgendaCard key={it.id} item={it} onPress={() => openCard(it)}
-                               onMenu={() => setCardMenuFor(it)} />
+                    <AgendaCard key={it.id} item={it} onPress={() => setCardMenuFor(it)} />
                   ))}
                   <Pressable testID={`agenda-add-day-${iso}`} onPress={() => openCreateSchedule(iso)} style={styles.addDayBtn}>
                     <Ionicons name="add" size={14} color={colors.fccBlue} />
@@ -300,7 +337,7 @@ export default function Agenda() {
             {(itemsByDate[isoDate(weekDates[selectedDayIdx])] || []).length === 0 ? (
               <Empty text="Sem rotas agendadas para este dia." icon="calendar-outline" />
             ) : (itemsByDate[isoDate(weekDates[selectedDayIdx])] || []).map((it) => (
-              <AgendaCard key={it.id} item={it} wide onPress={() => openCard(it)} onMenu={() => setCardMenuFor(it)} />
+              <AgendaCard key={it.id} item={it} wide onPress={() => setCardMenuFor(it)} />
             ))}
             <Btn testID="agenda-add-day-mobile" title="AGENDAR ROTA PARA ESTE DIA" variant="outline" icon="add"
                  onPress={() => openCreateSchedule(isoDate(weekDates[selectedDayIdx]))} />
@@ -309,11 +346,28 @@ export default function Agenda() {
       )}
 
       <ActionMenu
-        visible={!!cardMenuFor} onClose={() => setCardMenuFor(null)} title="EXECUÇÃO RECORRENTE"
-        items={[
+        visible={!!cardMenuFor} onClose={() => setCardMenuFor(null)}
+        title={cardMenuFor ? `${cardMenuFor.code || cardMenuFor.template_name || "EXECUÇÃO"} · ${formatDatePt(cardMenuFor.date)}` : ""}
+        items={cardMenuFor ? [
           { label: "Editar esta execução", icon: "create-outline", onPress: () => openCard(cardMenuFor), testID: "agenda-menu-edit-execution" },
-          { label: "Editar agendamento", icon: "repeat", onPress: () => openEditSchedule(cardMenuFor.schedule_id), testID: "agenda-menu-edit-schedule" },
-        ]}
+          { label: "Cancelar esta execução", icon: "close-circle-outline", destructive: true,
+            onPress: () => openCancel(cardMenuFor), testID: "agenda-menu-cancel-execution" },
+          ...(cardMenuFor.schedule_id ? [{
+            label: "Editar recorrência", icon: "repeat" as const,
+            onPress: () => openEditSchedule(cardMenuFor.schedule_id), testID: "agenda-menu-edit-recurrence",
+          }] : []),
+        ] : []}
+      />
+
+      <ConfirmModal
+        visible={!!cancelFor} title="Cancelar esta execução?"
+        message={cancelFor
+          ? (cancelFor.schedule_id
+              ? `Esta ação cancela apenas a execução de ${formatDatePt(cancelFor.date)}. A recorrência continua nas próximas datas.`
+              : `A execução ${cancelFor.code || ""} de ${formatDatePt(cancelFor.date)} vai ser cancelada.`)
+          : undefined}
+        destructive confirmLabel="CANCELAR EXECUÇÃO" cancelLabel="VOLTAR" loading={cancelling}
+        onConfirm={confirmCancel} onCancel={() => setCancelFor(null)}
       />
 
       <Modal visible={jumpOpen} transparent animationType="fade" onRequestClose={() => setJumpOpen(false)}>
@@ -463,7 +517,7 @@ export default function Agenda() {
   );
 }
 
-function AgendaCard({ item, onPress, onMenu, wide }: { item: any; onPress: () => void; onMenu: () => void; wide?: boolean }) {
+function AgendaCard({ item, onPress, wide }: { item: any; onPress: () => void; wide?: boolean }) {
   const st = routeStatus[item.status] || routeStatus.scheduled;
   return (
     <Pressable testID={`agenda-card-${item.id}`} onPress={onPress} style={[styles.card, wide ? styles.cardWide : null]}>
@@ -473,9 +527,9 @@ function AgendaCard({ item, onPress, onMenu, wide }: { item: any; onPress: () =>
           <Txt variant="monoBold" style={{ fontSize: 12 }}>{item.planned_start_time || "—"}</Txt>
         </View>
         {item.schedule_id && (
-          <Pressable testID={`agenda-recurrent-${item.id}`} onPress={(e) => { e.stopPropagation(); onMenu(); }} hitSlop={8}>
+          <View testID={`agenda-recurrent-${item.id}`}>
             <Ionicons name="repeat" size={14} color={colors.fccBlue} />
-          </Pressable>
+          </View>
         )}
       </View>
       <Txt variant="monoBold" numberOfLines={1} style={{ fontSize: 13 }}>{item.template_name || item.code}</Txt>

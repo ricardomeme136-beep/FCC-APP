@@ -377,6 +377,10 @@ class RouteScheduleCreateIn(BaseModel):
     vehicle_id: Optional[str] = None
 
 
+class CancelOccurrenceIn(BaseModel):
+    date: str  # "YYYY-MM-DD" — must be a real occurrence of this schedule's recurrence rule
+
+
 class RouteScheduleUpdateIn(BaseModel):
     name: Optional[str] = None
     template_id: Optional[str] = None

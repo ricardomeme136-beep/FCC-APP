@@ -354,6 +354,227 @@ class TestPermissionsAndTenantIsolation:
         assert cross.status_code == 404
 
 
+class TestCancelOccurrence:
+    def test_cancels_single_occurrence_and_others_survive(self, h_admin_fcc):
+        """The exact scenario from the spec: SEG/QUA/SEX recurrence, cancel
+        one middle occurrence, confirm every other date is untouched and the
+        calendar (which auto-materializes) never brings the cancelled one back."""
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=1)
+        end = start + timedelta(days=20)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "weekly", "weekdays": [0, 2, 4],
+            "start_date": start.isoformat(), "end_date": end.isoformat(), "planned_start_time": "06:00",
+        }, timeout=30)
+        assert r.status_code == 200, r.text
+        sid = r.json()["schedule"]["id"]
+        materialized_dates = sorted(rr["date"] for rr in r.json()["materialized"])
+        assert len(materialized_dates) >= 6
+        target = materialized_dates[3]
+
+        cancel = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_fcc,
+                               json={"date": target}, timeout=30)
+        assert cancel.status_code == 200, cancel.text
+        assert cancel.json()["removed_route"] is True
+        assert target in cancel.json()["skip_dates"]
+
+        cal = requests.get(f"{API}/schedule/calendar", headers=h_admin_fcc,
+                           params={"start": start.isoformat(), "end": end.isoformat()}, timeout=30).json()
+        cal_dates = {i["date"] for i in cal["items"] if i["schedule_id"] == sid}
+        assert target not in cal_dates
+        for d in materialized_dates:
+            if d != target:
+                assert d in cal_dates
+
+    def test_manual_materialize_does_not_recreate_skip_date(self, h_admin_fcc):
+        tpl = _template_with_one_stop(h_admin_fcc)
+        d = (_today() + timedelta(days=1)).isoformat()
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": d,
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+
+        cancel = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_fcc,
+                               json={"date": d}, timeout=30)
+        assert cancel.status_code == 200, cancel.text
+
+        again = requests.post(f"{API}/route-schedules/{sid}/materialize", headers=h_admin_fcc, timeout=30)
+        assert again.status_code == 200, again.text
+        assert again.json()["materialized"] == []
+
+    def test_pre_emptive_cancel_before_materialization_also_sticks(self, h_admin_fcc):
+        """Cancelling a date that hasn't been materialized yet (e.g. beyond
+        the 30-day horizon at creation time) must still block it forever —
+        skip_dates, not "was there a route to delete"."""
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=40)  # beyond MATERIALIZE_HORIZON_DAYS
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": start.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        assert r.json()["materialized"] == []  # too far out to materialize yet
+
+        cancel = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_fcc,
+                               json={"date": start.isoformat()}, timeout=30)
+        assert cancel.status_code == 200, cancel.text
+        assert cancel.json()["removed_route"] is False
+        assert start.isoformat() in cancel.json()["skip_dates"]
+
+    def test_rejects_date_not_in_schedule(self, h_admin_fcc):
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=1)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "weekly", "weekdays": [0],
+            "start_date": start.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        bad_date = start + timedelta(days=1)
+        while bad_date.weekday() == 0:
+            bad_date += timedelta(days=1)
+        bad = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_fcc,
+                            json={"date": bad_date.isoformat()}, timeout=15)
+        assert bad.status_code == 400
+
+    def test_tenant_isolation(self, h_admin_fcc, h_admin_suma):
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=1)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": start.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        cross = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_suma,
+                              json={"date": start.isoformat()}, timeout=15)
+        assert cross.status_code == 404
+
+    def test_completed_execution_is_never_hard_deleted(self, h_admin_fcc):
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=1)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": start.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        route_id = r.json()["materialized"][0]["id"]
+        requests.post(f"{API}/routes/{route_id}/start", headers=h_admin_fcc, timeout=15)
+        requests.post(f"{API}/routes/{route_id}/finish", headers=h_admin_fcc, timeout=15)
+
+        blocked = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_fcc,
+                                json={"date": start.isoformat()}, timeout=15)
+        assert blocked.status_code == 409
+
+        still_there = requests.get(f"{API}/routes/{route_id}", headers=h_admin_fcc, timeout=15)
+        assert still_there.status_code == 200
+        assert still_there.json()["status"] == "completed"
+
+    def test_in_progress_execution_is_never_hard_deleted(self, h_admin_fcc):
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=1)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": start.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        route_id = r.json()["materialized"][0]["id"]
+        requests.post(f"{API}/routes/{route_id}/start", headers=h_admin_fcc, timeout=15)
+
+        blocked = requests.post(f"{API}/route-schedules/{sid}/cancel-occurrence", headers=h_admin_fcc,
+                                json={"date": start.isoformat()}, timeout=15)
+        assert blocked.status_code == 409
+        still_there = requests.get(f"{API}/routes/{route_id}", headers=h_admin_fcc, timeout=15)
+        assert still_there.json()["status"] == "in_progress"
+
+
+class TestScheduleOverridden:
+    def test_assignment_on_scheduled_execution_marks_overridden(self, h_admin_fcc):
+        driver, _ = _driver_with_login(h_admin_fcc)
+        tpl = _template_with_one_stop(h_admin_fcc)
+        d = (_today() + timedelta(days=1)).isoformat()
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": d,
+        }, timeout=30)
+        route_id = r.json()["materialized"][0]["id"]
+        assert not r.json()["materialized"][0].get("schedule_overridden")
+
+        assigned = requests.patch(f"{API}/routes/{route_id}/assignment", headers=h_admin_fcc,
+                                  json={"driver_id": driver["id"]}, timeout=15)
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()["schedule_overridden"] is True
+
+    def test_assignment_on_route_without_schedule_does_not_mark_overridden(self, h_admin_fcc):
+        driver, _ = _driver_with_login(h_admin_fcc)
+        depot = _depot(h_admin_fcc)
+        c = _container(h_admin_fcc, depot["lat"] + 0.01, depot["lng"] + 0.01)
+        d = (_today() + timedelta(days=2)).isoformat()
+        manual = requests.post(f"{API}/routes/manual", headers=h_admin_fcc, json={
+            "date": d, "start": {"depot_id": depot["id"]},
+            "stops": [{"lat": c["lat"], "lng": c["lng"], "address": "TEST_ManualNoSched", "container_id": c["id"]}],
+        }, timeout=30)
+        assert manual.status_code == 200, manual.text
+        route_id = manual.json()["id"]
+        assigned = requests.patch(f"{API}/routes/{route_id}/assignment", headers=h_admin_fcc,
+                                  json={"driver_id": driver["id"]}, timeout=15)
+        assert assigned.status_code == 200, assigned.text
+        assert not assigned.json().get("schedule_overridden")
+
+
+class TestEditingScheduleRespectsOverride:
+    def test_rule_edit_preserves_overridden_but_recreates_others(self, h_admin_fcc):
+        driver, _ = _driver_with_login(h_admin_fcc)
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=5)
+        end = start + timedelta(days=2)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "daily",
+            "start_date": start.isoformat(), "end_date": end.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        routes = r.json()["materialized"]
+        assert len(routes) == 3
+        overridden_route = routes[0]
+
+        override = requests.patch(f"{API}/routes/{overridden_route['id']}/assignment", headers=h_admin_fcc,
+                                  json={"driver_id": driver["id"]}, timeout=15)
+        assert override.status_code == 200, override.text
+
+        edited = requests.patch(f"{API}/route-schedules/{sid}", headers=h_admin_fcc,
+                                json={"planned_start_time": "09:30"}, timeout=30)
+        assert edited.status_code == 200, edited.text
+        assert edited.json()["discarded"]["cancelled"] == 2
+        assert edited.json()["discarded"]["preserved"] == 1
+        assert len(edited.json()["materialized"]) == 2
+        assert all(rr["planned_start_time"] == "09:30" for rr in edited.json()["materialized"])
+
+        kept = requests.get(f"{API}/routes/{overridden_route['id']}", headers=h_admin_fcc, timeout=15)
+        assert kept.status_code == 200
+        assert kept.json()["driver_id"] == driver["id"]
+        assert kept.json()["planned_start_time"] != "09:30"
+
+
+class TestCancelFuturePreservesOverride:
+    def test_cancel_future_executions_preserves_overridden(self, h_admin_fcc):
+        driver, _ = _driver_with_login(h_admin_fcc)
+        tpl = _template_with_one_stop(h_admin_fcc)
+        start = _today() + timedelta(days=6)
+        end = start + timedelta(days=2)
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "daily",
+            "start_date": start.isoformat(), "end_date": end.isoformat(),
+        }, timeout=30)
+        sid = r.json()["schedule"]["id"]
+        routes = r.json()["materialized"]
+        assert len(routes) == 3
+        overridden_route = routes[1]
+        requests.patch(f"{API}/routes/{overridden_route['id']}/assignment", headers=h_admin_fcc,
+                       json={"driver_id": driver["id"]}, timeout=15)
+
+        cancelled = requests.post(f"{API}/route-schedules/{sid}/cancel-future-executions",
+                                  headers=h_admin_fcc, timeout=30)
+        assert cancelled.status_code == 200, cancelled.text
+        assert cancelled.json()["cancelled"] == 2
+        assert cancelled.json()["preserved_overridden"] == 1
+
+        kept = requests.get(f"{API}/routes/{overridden_route['id']}", headers=h_admin_fcc, timeout=15)
+        assert kept.status_code == 200
+
+
 class TestOldRoutesWithoutScheduleStillWork:
     def test_manual_route_has_null_schedule_id_and_appears_in_calendar(self, h_admin_fcc):
         depot = _depot(h_admin_fcc)

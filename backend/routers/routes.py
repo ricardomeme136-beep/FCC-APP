@@ -302,6 +302,14 @@ async def update_assignment(rid: str, body: RouteAssignmentIn, request: Request,
     if not updates:
         return await get_route(rid, user)
 
+    # Fase 3 point 4/10 — a manual driver/vehicle change on a schedule-
+    # materialized execution must survive that schedule's rule being edited
+    # later (see route_schedules.py::_discard_future_scheduled, which skips
+    # any route with this flag). Never set on a route with no schedule_id —
+    # there is no future rematerialization for it to survive.
+    if route.get("schedule_id"):
+        updates["schedule_overridden"] = True
+
     await db.routes.update_one(tenant_query(user, {"id": rid}), {"$set": updates})
     if task_updates:
         await db.collection_tasks.update_many(
@@ -447,6 +455,7 @@ async def optimize(body: OptimizeIn, request: Request,
             "load_kg": p["load_kg"],
             "actual_distance_km": None, "actual_duration_min": None,
             "template_id": None, "planned_start_time": None, "schedule_id": None,
+            "schedule_overridden": False,
             "status": "scheduled", "created_at": now_iso(),
         }
         await db.routes.insert_one(route_doc)
@@ -937,6 +946,7 @@ async def create_manual_route(body: ManualRouteIn, request: Request,
         "capacity_utilization": 0, "load_kg": 0,
         "actual_distance_km": None, "actual_duration_min": None,
         "mode": body.mode, "template_id": None, "planned_start_time": None, "schedule_id": None,
+        "schedule_overridden": False,
         "status": "scheduled", "created_at": now_iso(),
     }
     await db.routes.insert_one(route_doc)

@@ -29,7 +29,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.db import db, NO_ID
-from core.models import RouteScheduleCreateIn, RouteScheduleUpdateIn
+from core.models import RouteScheduleCreateIn, RouteScheduleUpdateIn, CancelOccurrenceIn
 from core.security import current_user, require_roles, tenant_query, write_audit, MANAGEMENT_ROLES
 from routers.route_templates import _TIME_RE, _build_execution_from_template
 
@@ -74,16 +74,35 @@ def _occurrence_dates(schedule: dict, floor_d: date_cls, ceiling_d: date_cls):
     end = _parse_date(schedule["end_date"]) if schedule.get("end_date") else None
     lo = max(floor_d, start)
     hi = min(ceiling_d, end) if end else ceiling_d
+    # Point 1 — dates explicitly cancelled via cancel-occurrence() are never
+    # regenerated, no matter how many times materialize()/GET calendar runs.
+    # Old schedules from before this field existed simply have no key here,
+    # which .get(..., []) already treats as "nothing skipped".
+    skip = set(schedule.get("skip_dates") or [])
     if schedule["recurrence_type"] == "once":
-        if lo <= start <= hi:
+        if lo <= start <= hi and start.isoformat() not in skip:
             yield start
         return
     weekdays = set(schedule.get("weekdays") or [])
     d = lo
     while d <= hi:
-        if d.weekday() in weekdays:
+        if d.weekday() in weekdays and d.isoformat() not in skip:
             yield d
         d += timedelta(days=1)
+
+
+def _date_matches_schedule(schedule: dict, d: date_cls) -> bool:
+    """True when `d` is a date the recurrence rule would ever generate on
+    its own (ignoring skip_dates and the 30-day materialization window) —
+    used only to validate cancel-occurrence's input, so a caller can't
+    accidentally "cancel" a date this schedule was never going to produce."""
+    start = _parse_date(schedule["start_date"])
+    end = _parse_date(schedule["end_date"]) if schedule.get("end_date") else None
+    if d < start or (end and d > end):
+        return False
+    if schedule["recurrence_type"] == "once":
+        return d == start
+    return d.weekday() in set(schedule.get("weekdays") or [])
 
 
 async def _get_schedule_or_404(user: dict, sid: str) -> dict:
@@ -132,28 +151,47 @@ async def _materialize(user: dict, schedule: dict) -> tuple:
     return created, conflicts
 
 
-async def _discard_future_scheduled(user: dict, schedule_id: str) -> None:
+async def _remove_route_hard(user: dict, route: dict) -> None:
+    """Shared trivial-discard step — no real work, nothing worth keeping.
+    Used by _discard_future_scheduled() and cancel_occurrence() alike so
+    there is exactly one place that knows how to safely wipe a
+    never-started route (tasks + stops + the route itself, freeing its
+    driver/vehicle back to available)."""
+    await db.collection_tasks.delete_many(tenant_query(user, {"route_id": route["id"]}))
+    await db.route_stops.delete_many(tenant_query(user, {"route_id": route["id"]}))
+    await db.routes.delete_one(tenant_query(user, {"id": route["id"]}))
+    if route.get("vehicle_id"):
+        await db.vehicles.update_one(tenant_query(user, {"id": route["vehicle_id"]}),
+                                     {"$set": {"status": "available"}})
+    if route.get("driver_id"):
+        await db.drivers.update_one(tenant_query(user, {"id": route["driver_id"]}),
+                                    {"$set": {"status": "available"}})
+
+
+async def _discard_future_scheduled(user: dict, schedule_id: str) -> dict:
     """Remove only the routes this schedule created that are still
-    `scheduled` (never started, zero real work) and dated today or later.
-    in_progress/completed/cancelled routes are permanent history and are
-    never touched — same status model as assert_route_editable() elsewhere.
-    Safe to hard-delete (not archive) because a never-started scheduled
+    `scheduled` (never started, zero real work), dated today or later, AND
+    never manually overridden (point 4/5/6 — a driver/vehicle change made
+    directly on one execution must survive both a rule edit and a "cancel
+    future executions" sweep; the admin can still cancel that one
+    individually via cancel_occurrence()). in_progress/completed/cancelled
+    routes are permanent history and are never touched — same status model
+    as assert_route_editable() elsewhere. Safe to hard-delete (not archive)
+    the non-overridden ones because a never-started, untouched scheduled
     route has no tasks/tracking worth keeping — identical to delete_route()'s
-    no-confirmation-needed path for a route with no real work."""
+    no-confirmation-needed path for a route with no real work. Returns
+    {"cancelled": N, "preserved": N} so callers can report both counts."""
     today = _today().isoformat()
+    base_q = {"schedule_id": schedule_id, "status": "scheduled", "date": {"$gte": today}}
     stale = await db.routes.find(tenant_query(user, {
-        "schedule_id": schedule_id, "status": "scheduled", "date": {"$gte": today},
+        **base_q, "schedule_overridden": {"$ne": True},
     }), NO_ID).to_list(500)
+    preserved = await db.routes.count_documents(tenant_query(user, {
+        **base_q, "schedule_overridden": True,
+    }))
     for r in stale:
-        await db.collection_tasks.delete_many(tenant_query(user, {"route_id": r["id"]}))
-        await db.route_stops.delete_many(tenant_query(user, {"route_id": r["id"]}))
-        await db.routes.delete_one(tenant_query(user, {"id": r["id"]}))
-        if r.get("vehicle_id"):
-            await db.vehicles.update_one(tenant_query(user, {"id": r["vehicle_id"]}),
-                                         {"$set": {"status": "available"}})
-        if r.get("driver_id"):
-            await db.drivers.update_one(tenant_query(user, {"id": r["driver_id"]}),
-                                        {"$set": {"status": "available"}})
+        await _remove_route_hard(user, r)
+    return {"cancelled": len(stale), "preserved": preserved}
 
 
 @router.get("")
@@ -202,6 +240,7 @@ async def create_schedule(body: RouteScheduleCreateIn, request: Request,
         "end_date": body.end_date, "weekdays": weekdays,
         "planned_start_time": body.planned_start_time,
         "driver_id": body.driver_id, "vehicle_id": body.vehicle_id,
+        "skip_dates": [],
         "active": True, "created_at": now_iso(), "updated_at": now_iso(),
     }
     await db.route_schedules.insert_one(doc)
@@ -219,7 +258,7 @@ async def update_schedule(sid: str, body: RouteScheduleUpdateIn, request: Reques
     schedule = await _get_schedule_or_404(user, sid)
     updates = {k: v for k, v in body.dict(exclude_unset=True).items()}
     if not updates:
-        return {"schedule": schedule, "materialized": [], "conflicts": {}}
+        return {"schedule": schedule, "materialized": [], "conflicts": {}, "discarded": {"cancelled": 0, "preserved": 0}}
 
     was_active = schedule.get("active", True)
 
@@ -255,14 +294,14 @@ async def update_schedule(sid: str, body: RouteScheduleUpdateIn, request: Reques
     await db.route_schedules.update_one(tenant_query(user, {"id": sid}), {"$set": updates})
     schedule.update(updates)
 
-    created, conflicts = [], {}
+    created, conflicts, discarded = [], {}, {"cancelled": 0, "preserved": 0}
     if (rule_changed or reactivated) and schedule.get("active", True):
         if rule_changed:
-            await _discard_future_scheduled(user, sid)
+            discarded = await _discard_future_scheduled(user, sid)
         created, conflicts = await _materialize(user, schedule)
 
     await write_audit(user, "update", "route_schedule", sid, request, new=updates)
-    return {"schedule": schedule, "materialized": created, "conflicts": conflicts}
+    return {"schedule": schedule, "materialized": created, "conflicts": conflicts, "discarded": discarded}
 
 
 @router.delete("/{sid}")
@@ -299,14 +338,66 @@ async def materialize_endpoint(sid: str, request: Request,
 @router.post("/{sid}/cancel-future-executions")
 async def cancel_future_executions(sid: str, request: Request,
                                    user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
-    """Point 8 — distinct from deactivating: this cancels the future
-    `scheduled` routes already materialized, without touching the rule
-    itself (call PATCH {active:false} separately, or together, to also stop
-    future materialization)."""
+    """Point 8 (original spec) / point 6 (this round) — distinct from
+    deactivating: this cancels the future `scheduled` routes already
+    materialized, without touching the rule itself (call PATCH
+    {active:false} separately, or together, to also stop future
+    materialization). Never touches a route with schedule_overridden=true —
+    those were deliberately hand-adjusted and are left for the admin to
+    cancel individually via cancel_occurrence() if that's really what they
+    want. Does NOT add any of the affected dates to skip_dates — this
+    endpoint only clears what's currently materialized; it does not change
+    the rule's own future recurrence (unlike cancel_occurrence(), which
+    targets one date specifically and must keep it cancelled forever)."""
     await _get_schedule_or_404(user, sid)
-    await _discard_future_scheduled(user, sid)
-    await write_audit(user, "cancel_future_executions", "route_schedule", sid, request)
-    return {"ok": True}
+    result = await _discard_future_scheduled(user, sid)
+    await write_audit(user, "cancel_future_executions", "route_schedule", sid, request, new=result)
+    return {"ok": True, "cancelled": result["cancelled"], "preserved_overridden": result["preserved"]}
+
+
+@router.post("/{sid}/cancel-occurrence")
+async def cancel_occurrence(sid: str, body: CancelOccurrenceIn, request: Request,
+                            user: dict = Depends(require_roles(*MANAGEMENT_ROLES))):
+    """Point 2 — cancel exactly ONE occurrence of a recurring schedule,
+    without touching the rule or any other date. Two effects applied
+    together, so they can never end up inconsistent with each other:
+    (1) if a `routes` document already exists for this schedule_id+date and
+    has no real history, it is removed (the same trivial-discard safety as
+    delete_route()'s no-confirmation path); (2) the date is recorded in
+    skip_dates so _materialize() never recreates it on a later call — the
+    part a plain DELETE /routes/{id} could never do on its own (this was
+    the actual bug behind the original audit request).
+
+    A route that already has real history (in_progress, completed, or any
+    collected/failed task) is deliberately left untouched here — cancelling
+    or archiving history-bearing routes already has a safe, password-gated
+    path (DELETE /routes/{id}), and duplicating that confirmation logic in
+    a second endpoint would be two divergent implementations of the same
+    safety rule. The caller (Agenda UI) falls back to that endpoint for
+    this case, exactly like it already does for a one-off (non-recurring)
+    execution."""
+    schedule = await _get_schedule_or_404(user, sid)
+    d = _parse_date(body.date)
+    if not _date_matches_schedule(schedule, d):
+        raise HTTPException(400, "Esta data não corresponde a nenhuma ocorrência deste agendamento")
+
+    route = await db.routes.find_one(tenant_query(user, {"schedule_id": sid, "date": body.date}), NO_ID)
+    if route:
+        tasks = await db.collection_tasks.find(tenant_query(user, {"route_id": route["id"]}), NO_ID).to_list(2000)
+        has_real_work = any(t["status"] in ("collected", "failed") for t in tasks)
+        if route["status"] in ("in_progress", "completed") or has_real_work:
+            raise HTTPException(
+                409,
+                "Esta execução já tem histórico real (em curso, concluída ou com recolhas registadas) — "
+                "cancele-a a partir do detalhe da rota (\"Eliminar rota\"), que pede confirmação de password.")
+        await _remove_route_hard(user, route)
+
+    skip_dates = sorted(set(schedule.get("skip_dates") or []) | {body.date})
+    await db.route_schedules.update_one(tenant_query(user, {"id": sid}),
+                                        {"$set": {"skip_dates": skip_dates, "updated_at": now_iso()}})
+    await write_audit(user, "cancel_occurrence", "route_schedule", sid, request,
+                      new={"date": body.date, "had_route": bool(route)})
+    return {"ok": True, "date": body.date, "skip_dates": skip_dates, "removed_route": bool(route)}
 
 
 @calendar_router.get("/calendar")
@@ -357,6 +448,7 @@ async def get_calendar(start: str, end: str, user: dict = Depends(current_user))
             "vehicle_id": r.get("vehicle_id"), "vehicle_plate": veh["plate"] if veh else None,
             "schedule_id": r.get("schedule_id"),
             "recurrent": bool(r.get("schedule_id") and r["schedule_id"] in schedules_by_id),
+            "schedule_overridden": r.get("schedule_overridden", False),
             "duration_min": r.get("duration_min"), "num_stops": r.get("num_stops"),
         })
     items.sort(key=lambda i: (i["date"], i["planned_start_time"] or "99:99"))
