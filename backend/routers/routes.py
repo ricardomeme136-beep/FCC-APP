@@ -796,6 +796,21 @@ async def delete_route(rid: str, request: Request, body: Optional[RouteDeleteIn]
         await db.collection_tasks.delete_many(tenant_query(user, {"route_id": rid}))
         await db.route_stops.delete_many(tenant_query(user, {"route_id": rid}))
         await db.routes.delete_one(tenant_query(user, {"id": rid}))
+        # This route document was the only thing stopping _materialize()
+        # from recreating this same date the next time it runs — a plain
+        # hard-delete here (unlike the archive path above, which leaves a
+        # cancelled document behind as its own guard) would otherwise make a
+        # deleted schedule-derived execution silently reappear. Mirrors
+        # cancel_occurrence()'s skip_dates write in route_schedules.py so
+        # there is exactly one deletion path that ever forgets this.
+        if route.get("schedule_id"):
+            schedule = await db.route_schedules.find_one(
+                tenant_query(user, {"id": route["schedule_id"]}), NO_ID)
+            if schedule:
+                skip_dates = sorted(set(schedule.get("skip_dates") or []) | {route["date"]})
+                await db.route_schedules.update_one(
+                    tenant_query(user, {"id": route["schedule_id"]}),
+                    {"$set": {"skip_dates": skip_dates}})
         action, message = "delete", f"{admin_name} eliminou a Rota {route.get('code')}."
 
     if route.get("vehicle_id"):

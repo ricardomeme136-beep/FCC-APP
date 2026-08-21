@@ -482,6 +482,61 @@ class TestCancelOccurrence:
         assert still_there.json()["status"] == "in_progress"
 
 
+class TestGenericDeleteOfScheduleDerivedExecution:
+    """Regression for the bug audited 2026-08-21: a schedule-derived, never-
+    started execution deleted via the generic DELETE /routes/{id} (the
+    route detail screen's "Eliminar rota", not Agenda's dedicated cancel
+    button) used to hard-delete the route document with no skip_dates
+    write at all — the next materialize() call (manual, or the calendar's
+    own auto-materialize) then silently recreated the exact route the
+    manager had just deleted. cancel-occurrence() already got this right;
+    delete_route() did not."""
+
+    def test_generic_delete_blocks_rematerialization(self, h_admin_fcc):
+        tpl = _template_with_one_stop(h_admin_fcc)
+        d = (_today() + timedelta(days=1)).isoformat()
+        r = requests.post(f"{API}/route-schedules", headers=h_admin_fcc, json={
+            "template_id": tpl["id"], "recurrence_type": "once", "start_date": d,
+        }, timeout=30)
+        assert r.status_code == 200, r.text
+        sid = r.json()["schedule"]["id"]
+        route_id = r.json()["materialized"][0]["id"]
+
+        deleted = requests.delete(f"{API}/routes/{route_id}", headers=h_admin_fcc, timeout=15)
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["action"] == "delete"
+
+        gone = requests.get(f"{API}/routes/{route_id}", headers=h_admin_fcc, timeout=15)
+        assert gone.status_code == 404
+
+        schedule = requests.get(f"{API}/route-schedules/{sid}", headers=h_admin_fcc, timeout=15).json()
+        assert d in schedule["skip_dates"]
+
+        again = requests.post(f"{API}/route-schedules/{sid}/materialize", headers=h_admin_fcc, timeout=30)
+        assert again.status_code == 200, again.text
+        assert again.json()["materialized"] == []
+
+    def test_generic_delete_of_non_schedule_route_is_unaffected(self, h_admin_fcc):
+        """Same endpoint, ad-hoc (non-recurring) route — no schedule_id to
+        touch, must behave exactly as before this fix."""
+        depot = _depot(h_admin_fcc)
+        c = _container(h_admin_fcc, depot["lat"] + 0.01, depot["lng"] + 0.015)
+        d = (_today() + timedelta(days=2)).isoformat()
+        manual = requests.post(f"{API}/routes/manual", headers=h_admin_fcc, json={
+            "date": d, "start": {"depot_id": depot["id"]},
+            "stops": [{"lat": c["lat"], "lng": c["lng"], "address": "TEST_ManualDelete", "container_id": c["id"]}],
+        }, timeout=30)
+        assert manual.status_code == 200, manual.text
+        route_id = manual.json()["id"]
+        assert manual.json().get("schedule_id") is None
+
+        deleted = requests.delete(f"{API}/routes/{route_id}", headers=h_admin_fcc, timeout=15)
+        assert deleted.status_code == 200, deleted.text
+        assert deleted.json()["action"] == "delete"
+        gone = requests.get(f"{API}/routes/{route_id}", headers=h_admin_fcc, timeout=15)
+        assert gone.status_code == 404
+
+
 class TestScheduleOverridden:
     def test_assignment_on_scheduled_execution_marks_overridden(self, h_admin_fcc):
         driver, _ = _driver_with_login(h_admin_fcc)

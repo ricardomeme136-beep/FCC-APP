@@ -4,10 +4,17 @@ import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { api } from "@/src/api";
+import { filterAgendaItems, AgendaStatusFilter } from "@/src/utils/agendaFilter";
 import { ScreenHeader } from "@/src/components/Header";
 import { Btn, Card, Empty, Loading, SearchInput, Txt, useToast } from "@/src/components/ui";
 import ContainerPicker from "@/src/components/ContainerPicker";
 import { colors, spacing, border, radius, routeStatus, wasteLabels, vehicleStatus } from "@/src/theme";
+
+const STATUS_FILTERS: { key: AgendaStatusFilter; label: string }[] = [
+  { key: "active", label: "ATIVAS" },
+  { key: "cancelled", label: "CANCELADAS" },
+  { key: "all", label: "TODAS" },
+];
 
 type Vehicle = { id: string; plate: string; capacity_kg: number; allowed_waste_types: string[]; status: string };
 type Driver = { id: string; name: string; status: string };
@@ -34,6 +41,13 @@ export default function Execucoes() {
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
+  // Default "active" hides archived/cancelled executions — a route with
+  // real history is never hard-deleted by DELETE /routes/{id} (it's
+  // archived, status -> cancelled, to keep proof of the work) but this
+  // list showed every status unfiltered, so an "eliminar" that archived a
+  // route left the card sitting right here, indistinguishable at a glance
+  // from an active one — reading as "eliminar não funcionou".
+  const [statusFilter, setStatusFilter] = useState<AgendaStatusFilter>("active");
 
   const [date, setDate] = useState(DATE_OPTIONS[0].date);
   const [containerIds, setContainerIds] = useState<string[]>([]);
@@ -189,12 +203,25 @@ export default function Execucoes() {
               <Btn testID="start-create-route-map" title="CRIAR NO MAPA" icon="map" variant="outline" size="sm" style={{ flex: 1 }} onPress={() => router.push("/(manager)/mapa-rota" as any)} />
             </View>
             {routes.length > 0 && (
-              <SearchInput testID="search-routes" value={search} onChangeText={setSearch} placeholder="Pesquisar por código ou motorista..." />
+              <>
+                <SearchInput testID="search-routes" value={search} onChangeText={setSearch} placeholder="Pesquisar por código ou motorista..." />
+                <View style={styles.statusFilterRow}>
+                  {STATUS_FILTERS.map((f) => {
+                    const on = statusFilter === f.key;
+                    return (
+                      <Pressable key={f.key} testID={`execucoes-status-filter-${f.key}`} onPress={() => setStatusFilter(f.key)}
+                                style={[styles.chip, on ? styles.chipOn : null]}>
+                        <Txt variant="monoBold" style={{ fontSize: 11 }} color={on ? colors.onSurfaceInverse : colors.onSurface}>{f.label}</Txt>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </>
             )}
             {routes.length === 0 ? (
               <Empty text="Nenhuma rota criada." icon="navigate-outline" />
             ) : (
-              routes
+              filterAgendaItems(routes, statusFilter)
                 .filter((r) => !search || r.code?.toLowerCase().includes(search.toLowerCase()) || r.driver_name?.toLowerCase().includes(search.toLowerCase()))
                 .map((r) => {
                 const st = routeStatus[r.status] || routeStatus.scheduled;
@@ -354,6 +381,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
   scroll: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing["2xl"] },
   createRow: { flexDirection: "row", gap: spacing.sm },
+  statusFilterRow: { flexDirection: "row", gap: spacing.sm },
   formHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   chipRow: { gap: spacing.sm, paddingVertical: 2 },
   chip: {
