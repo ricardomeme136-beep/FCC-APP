@@ -34,7 +34,8 @@ async def ensure_indexes() -> None:
         "vehicles", "drivers", "containers", "routes", "collection_tasks",
         "incidents", "depots", "facilities", "customers", "zones",
         "gps_positions", "notifications", "audit_logs", "route_stops",
-        "tracking_sessions", "route_templates", "route_schedules",
+        "tracking_sessions", "route_templates", "route_schedules", "tracking_markers",
+        "alerts",
     ]:
         await db[coll].create_index([("company_id", 1)])
     await db.route_templates.create_index("name")
@@ -62,3 +63,15 @@ async def ensure_indexes() -> None:
     await db.containers.create_index([("company_id", 1), ("id", 1)])
     await db.route_stops.create_index([("route_id", 1), ("sequence", 1)])
     await db.tracking_sessions.create_index([("driver_id", 1), ("status", 1)])
+    # Container marks captured during a recording (point 4, GRAVAR + contentores).
+    # Never mixes with gps_positions — a separate collection so the recorded
+    # trajectory geometry is never at risk of being touched by this feature.
+    await db.tracking_markers.create_index([("tracking_session_id", 1), ("sequence", 1)])
+    await db.tracking_markers.create_index("marker_uuid", unique=True, sparse=True)
+    # One alert document per (company, type, container) for the lifetime of
+    # that container — fail_task()/complete_task() always upsert against
+    # this key, never insert a second document for the same recurring
+    # problem. The uniqueness guarantee lives here, not just in application
+    # logic (Fase 1 — alertas).
+    await db.alerts.create_index([("company_id", 1), ("type", 1), ("container_id", 1)], unique=True)
+    await db.alerts.create_index([("company_id", 1), ("status", 1)])

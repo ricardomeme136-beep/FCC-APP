@@ -52,7 +52,7 @@ export function CompactCard({ children, style, testID }:
 // ---------- Button ----------
 type BtnProps = PressableProps & {
   title: string;
-  variant?: "primary" | "dark" | "success" | "error" | "warning" | "outline";
+  variant?: "primary" | "dark" | "success" | "error" | "warning" | "outline" | "blue";
   icon?: keyof typeof Ionicons.glyphMap;
   size?: "sm" | "md" | "lg" | "xl";
   loading?: boolean;
@@ -60,6 +60,10 @@ type BtnProps = PressableProps & {
 };
 const btnBg: Record<string, { bg: string; fg: string; border?: string }> = {
   primary: { bg: colors.brand, fg: colors.onBrand },
+  // Redesign FASE VISUAL A (driver app) — the FCC blue primary action color.
+  // Additive variant: every existing call site keeps whichever variant it
+  // already used, so this never changes an un-touched screen's colors.
+  blue: { bg: colors.fccBlue, fg: colors.onFccBlue },
   dark: { bg: colors.onSurface, fg: "#fff" },
   success: { bg: colors.success, fg: "#fff" },
   error: { bg: colors.error, fg: "#fff" },
@@ -91,6 +95,34 @@ export function Btn({ title, variant = "primary", icon, size = "md", loading, st
         </View>
       )}
     </Pressable>
+  );
+}
+
+// ---------- ContainerActionButtons ----------
+// The 3 always-visible driver actions on the current container (Navegação's
+// bottom panel) — extracted so the row/colors/testIDs live in one place
+// instead of being redefined per screen. `taskId` only shapes the testIDs
+// (nav-complete-{id} etc., unchanged from before this extraction); the
+// caller still owns what each press actually does.
+export function ContainerActionButtons({ taskId, disabled, onComplete, onFail, onIgnore }: {
+  taskId: string; disabled?: boolean;
+  onComplete: () => void; onFail: () => void; onIgnore: () => void;
+}) {
+  return (
+    <View style={styles.bigActionsRow}>
+      <Pressable testID={`nav-complete-${taskId}`} disabled={disabled} onPress={onComplete} style={[styles.bigActionBtn, { backgroundColor: colors.success }]}>
+        <Ionicons name="checkmark" size={22} color="#fff" />
+        <Text style={[styles.bigActionTxt, { color: "#fff" }]}>RECOLHIDO</Text>
+      </Pressable>
+      <Pressable testID={`nav-fail-${taskId}`} disabled={disabled} onPress={onFail} style={[styles.bigActionBtn, { backgroundColor: colors.error }]}>
+        <Ionicons name="warning" size={22} color="#fff" />
+        <Text style={[styles.bigActionTxt, { color: "#fff" }]}>PROBLEMA</Text>
+      </Pressable>
+      <Pressable testID={`nav-ignore-${taskId}`} disabled={disabled} onPress={onIgnore} style={[styles.bigActionBtn, { backgroundColor: colors.surfaceSecondary }]}>
+        <Ionicons name="play-skip-forward" size={22} color={colors.onSurface} />
+        <Text style={[styles.bigActionTxt, { color: colors.onSurface }]}>IGNORAR</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -184,8 +216,8 @@ export function LiveDriverRow({ name, meta, statusColor, agoLabel, testID }: {
 }
 
 // ---------- AlertRow ----------
-export function AlertRow({ title, description, tone = "warning", testID }:
-  { title: string; description?: string; tone?: "warning" | "error"; testID?: string }) {
+export function AlertRow({ title, description, tone = "warning", onResolve, resolving, testID }:
+  { title: string; description?: string; tone?: "warning" | "error"; onResolve?: () => void; resolving?: boolean; testID?: string }) {
   const c = tone === "error" ? colors.error : colors.warning;
   return (
     <View testID={testID} style={[styles.alertRow, { borderLeftColor: c }]}>
@@ -194,6 +226,11 @@ export function AlertRow({ title, description, tone = "warning", testID }:
         <Txt variant="monoBold" style={{ fontSize: 12 }} numberOfLines={1}>{title}</Txt>
         {description ? <Txt variant="mono" color={colors.muted} style={{ fontSize: 11 }} numberOfLines={2}>{description}</Txt> : null}
       </View>
+      {onResolve ? (
+        <Pressable testID={testID ? `${testID}-resolve` : undefined} disabled={resolving} onPress={onResolve} hitSlop={8} style={{ padding: 2 }}>
+          {resolving ? <ActivityIndicator size="small" color={colors.muted} /> : <Ionicons name="checkmark-circle-outline" size={20} color={colors.muted} />}
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -405,4 +442,7 @@ const styles = StyleSheet.create({
   toastWrap: { position: "absolute", bottom: 100, left: 16, right: 16, gap: 8, alignItems: "center" },
   toast: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: radius.md, maxWidth: "100%" },
   toastTxt: { fontFamily: fonts.monoBold, fontSize: 13, color: "#fff" },
+  bigActionsRow: { flexDirection: "row", gap: spacing.sm },
+  bigActionBtn: { flex: 1, height: 56, borderRadius: radius.md, alignItems: "center", justifyContent: "center", gap: 2 },
+  bigActionTxt: { fontFamily: fonts.monoBold, fontSize: 11 },
 });

@@ -8,7 +8,7 @@ import { useAuth } from "@/src/auth/AuthContext";
 import { ScreenHeader } from "@/src/components/Header";
 import {
   CompactCard, Loading, DashboardStat, SectionHeader, MapToolbar, MapToolbarItem,
-  LiveDriverRow, AlertRow, IncidentRow, Txt,
+  LiveDriverRow, AlertRow, IncidentRow, Txt, useToast,
 } from "@/src/components/ui";
 import FleetMap from "@/src/components/FleetMap";
 import { colors, spacing, border, radius, incidentStatus, incidentKindLabels } from "@/src/theme";
@@ -26,7 +26,7 @@ type Dash = {
   pending: number;
   recent_incidents: any[];
   active_drivers_list: ActiveDriver[];
-  alerts: { type: string; severity: string; message: string }[];
+  alerts: { id?: string; type: string; severity: string; message: string; container_id?: string; route_id?: string }[];
 };
 
 const DESKTOP_BREAKPOINT = 768;
@@ -64,6 +64,7 @@ function driverPresence(d: ActiveDriver, live: any[]): { color: string; meta: st
 export default function Painel() {
   const { user, logout } = useAuth();
   const router = useRouter();
+  const toast = useToast();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
   const mapHeight = isDesktop ? (width >= 1400 ? 520 : 460) : 240;
@@ -74,6 +75,7 @@ export default function Painel() {
   const [places, setPlaces] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [mapLayers, setMapLayers] = useState<Record<string, boolean>>({ trucks: true, containers: false, routes: false, places: true });
+  const [resolvingAlertId, setResolvingAlertId] = useState<string | null>(null);
 
   const loadStatic = useCallback(async () => {
     const [depots, facilities, cs] = await Promise.all([
@@ -110,6 +112,18 @@ export default function Painel() {
     setRefreshing(true);
     await loadDash();
     setRefreshing(false);
+  };
+
+  const resolveAlert = async (id: string) => {
+    setResolvingAlertId(id);
+    try {
+      await api.post(`/alerts/${id}/resolve`, {});
+      await loadDash();
+    } catch (e: any) {
+      toast(e?.message || "Erro ao resolver alerta", "error");
+    } finally {
+      setResolvingAlertId(null);
+    }
   };
 
   if (!dash) {
@@ -173,8 +187,10 @@ export default function Painel() {
           <SectionHeader title="ALERTAS" />
           <View style={{ gap: spacing.xs }}>
             {dash.alerts.map((a, i) => (
-              <AlertRow key={i} testID={`alert-${i}`} title={a.message}
-                tone={a.severity === "high" || a.severity === "error" ? "error" : "warning"} />
+              <AlertRow key={a.id || i} testID={`alert-${i}`} title={a.message}
+                tone={a.severity === "high" || a.severity === "error" ? "error" : "warning"}
+                onResolve={a.id ? () => resolveAlert(a.id!) : undefined}
+                resolving={resolvingAlertId === a.id} />
             ))}
           </View>
         </>

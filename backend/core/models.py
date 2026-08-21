@@ -136,6 +136,29 @@ class TrackingPointsIn(BaseModel):
     points: List[TrackingPointIn]
 
 
+class TrackingMarkerIn(BaseModel):
+    marker_uuid: str  # client-generated — idempotency key, mirrors TrackingPointIn.point_uuid
+    lat: float
+    lng: float
+    timestamp: str  # device clock, ISO8601
+    type: str = "container"
+    container_id: Optional[str] = None    # set only when the driver picked an existing nearby container
+    container_code: Optional[str] = None  # free-text label for a new/unidentified point
+    waste_type: Optional[str] = None
+    note: str = ""
+
+
+class TrackingMarkersIn(BaseModel):
+    markers: List[TrackingMarkerIn]
+
+
+class TrackingMarkerUpdateIn(BaseModel):
+    container_id: Optional[str] = None
+    container_code: Optional[str] = None
+    waste_type: Optional[str] = None
+    note: Optional[str] = None
+
+
 class TaskCompleteIn(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -257,6 +280,11 @@ class RouteDeleteIn(BaseModel):
 
 class ContainerDeleteIn(BaseModel):
     password: Optional[str] = None
+
+
+class AlertResolveIn(BaseModel):
+    # Not shown on the dashboard yet (Fase 1) — kept for future audit/history use.
+    resolution_note: Optional[str] = None
 
 
 class RouteStartIn(BaseModel):

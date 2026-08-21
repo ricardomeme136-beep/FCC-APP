@@ -109,24 +109,26 @@ async def dashboard(user: dict = Depends(current_user)):
 
 async def _smart_alerts(user, routes, tasks):
     alerts = []
-    # container repeatedly failed
-    fail_counts = {}
-    for t in tasks:
-        if t["status"] == "failed":
-            fail_counts[t["container_id"]] = fail_counts.get(t["container_id"], 0) + 1
-    # also look back over recent history
-    recent = await db.collection_tasks.find(
-        tenant_query(user, {"status": "failed"}), NO_ID).sort("completed_at", -1).to_list(500)
-    hist = {}
-    for t in recent:
-        hist[t["container_id"]] = hist.get(t["container_id"], 0) + 1
-    for cid, n in hist.items():
-        if n >= 2:
-            alerts.append({
-                "type": "repeated_failure", "severity": "high",
-                "message": f"O contentor apresenta {n} recolhas falhadas.",
-                "container_id": cid,
-            })
+    # Fase 1 — alertas: repeated-failure alerts are persisted, deduplicated
+    # documents (routers/alerts.py + routers/tasks.py upsert them on every
+    # failed/successful collection) — no longer recomputed from the full
+    # collection_tasks history on every dashboard load, which is what made
+    # them look permanent (nothing ever marked one "no longer relevant").
+    # occurrence_count>=2 keeps the exact same visibility threshold as before.
+    open_alerts = await db.alerts.find(
+        tenant_query(user, {"status": "open", "occurrence_count": {"$gte": 2}}),
+        NO_ID).sort("last_failure_at", -1).to_list(200)
+    for a in open_alerts:
+        # .get() rather than a["..."] on purpose: one malformed alert
+        # document (there is no legitimate way to produce one through the
+        # app, only e.g. a manual DB edit) must never take down the whole
+        # dashboard for every KPI/section on this endpoint.
+        if not a.get("id"):
+            continue
+        alerts.append({
+            "id": a["id"], "type": a.get("type"), "severity": a.get("severity", "high"),
+            "message": a.get("message", ""), "container_id": a.get("container_id"),
+        })
     # route running slower than historic average duration
     for r in routes:
         if r["status"] == "in_progress" and r.get("duration_min"):
